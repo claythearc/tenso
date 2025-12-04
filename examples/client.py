@@ -18,9 +18,15 @@ packet = tenso.dumps(data)
 client.sendall(packet)
 
 # 3. Receive Result
-# (We reuse the helper logic, or just read 4096 for simplicity in this demo)
-# In production, use the same recv_tenso logic here.
-response_data = client.recv(len(packet) + 100) 
+# Read the response in chunks to handle large packets
+response_data = b''
+expected_size = len(packet)  # Response should be similar size
+while len(response_data) < expected_size:
+    chunk = client.recv(min(65536, expected_size - len(response_data)))
+    if not chunk:
+        break
+    response_data += chunk
+
 result = tenso.loads(response_data)
 
 print(f"Got Result in {time.time() - t0:.4f}s")
