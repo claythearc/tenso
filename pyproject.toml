@@ -1,7 +1,8 @@
 [project]
 name = "tenso"
 version = "0.2.0"
-description = "High-performance zero-copy tensor serialization"
+description = "High-performance zero-copy tensor protocol"
+readme = "README.md"
 dependencies = [
     "numpy",
 ]
