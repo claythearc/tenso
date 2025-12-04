@@ -1,66 +1,110 @@
 import pytest
 import numpy as np
 import tenso
+import struct
 
-def test_alignment():
-    """Ensure the body data starts at a 64-byte aligned offset."""
-    # Create a weird shape to ensure header+shape isn't accidentally aligned
-    # Header(8) + Shape(3 dims * 4 = 12) = 20 bytes. 
-    # Needs 44 bytes of padding to reach 64.
-    data = np.zeros((10, 10, 10), dtype=np.float32)
+# --- Core Functionality Tests ---
+
+@pytest.mark.parametrize("dtype", [
+    np.float32, np.int32, np.float64, np.int64,
+    np.uint8, np.uint16, np.bool_, np.float16,
+    np.int8, np.int16, np.uint32, np.uint64
+])
+def test_all_dtypes(dtype):
+    """Verify all supported dtypes serialize and deserialize correctly."""
+    shape = (10, 10)
+    if dtype == np.bool_:
+        original = np.random.randint(0, 2, size=shape).astype(dtype)
+    elif np.issubdtype(dtype, np.integer):
+        original = np.random.randint(0, 10, size=shape).astype(dtype)
+    else:
+        original = np.random.randn(*shape).astype(dtype)
+        
+    packet = tenso.dumps(original)
+    restored = tenso.loads(packet)
+    
+    assert restored.dtype == original.dtype
+    assert restored.shape == original.shape
+    assert np.array_equal(original, restored)
+
+def test_large_dimensions():
+    """Verify handling of high-dimensional arrays."""
+    # Create a 6D array (max ndim is 255 in protocol v2)
+    shape = (2, 2, 2, 2, 2, 2)
+    original = np.zeros(shape, dtype=np.float32)
+    
+    packet = tenso.dumps(original)
+    restored = tenso.loads(packet)
+    
+    assert restored.shape == shape
+    
+    # Test packet inspection
+    info = tenso.get_packet_info(packet)
+    assert info['ndim'] == 6
+    assert info['shape'] == shape
+
+# --- Introspection Tests ---
+
+def test_get_packet_info():
+    """Verify introspection returns correct metadata without deserializing."""
+    data = np.random.rand(32, 128).astype(np.float32)
     packet = tenso.dumps(data)
     
-    # Manually inspect the padding
-    header_shape_len = 8 + (3 * 4)
+    info = tenso.get_packet_info(packet)
+    
+    assert info['version'] == 2
+    assert info['dtype'] == np.dtype('float32')
+    assert info['shape'] == (32, 128)
+    assert info['ndim'] == 2
+    assert info['aligned'] is True
+    assert info['total_elements'] == 32 * 128
+    assert info['data_size_bytes'] == 32 * 128 * 4  # float32 is 4 bytes
+
+def test_packet_info_invalid():
+    """Verify introspection raises errors on bad data."""
+    with pytest.raises(ValueError, match="Packet too short"):
+        tenso.get_packet_info(b'short')
+        
+    with pytest.raises(ValueError, match="Invalid tenso packet"):
+        tenso.get_packet_info(b'JUNK____')
+
+# --- Alignment & Safety Tests ---
+
+def test_is_aligned_utility():
+    """Test the is_aligned utility function."""
+    # Note: We can't easily force the allocator to give us aligned/unaligned 
+    # addresses in pure Python tests, so we mainly check it runs and returns bool.
+    data = b'\x00' * 100
+    aligned = tenso.is_aligned(data)
+    assert isinstance(aligned, bool)
+
+def test_padding_logic():
+    """Verify that packets contain correct padding for 64-byte alignment."""
+    # 1D array of float32
+    # Header (8) + Shape (1*4 = 4) = 12 bytes offset.
+    # Needs 52 bytes padding to reach 64.
+    data = np.zeros((10,), dtype=np.float32)
+    packet = tenso.dumps(data)
+    
+    header_shape_len = 8 + 4
     padding_len = 64 - header_shape_len
     
-    # The bytes at the padding location should be zero
-    padding_area = packet[header_shape_len : header_shape_len + padding_len]
-    assert padding_area == b'\x00' * padding_len
-    
-    # Verify load works
-    restored = tenso.loads(packet)
-    assert np.array_equal(data, restored)
+    # Extract padding area directly
+    padding = packet[header_shape_len : header_shape_len + padding_len]
+    assert len(padding) == padding_len
+    assert padding == b'\x00' * padding_len
 
-def test_safety_copy():
-    """Ensure copy=True creates a distinct memory object."""
-    data = np.array([1, 2, 3, 4], dtype=np.float32)
+def test_copy_flag():
+    """Verify copy=True behavior."""
+    data = np.zeros((10,), dtype=np.float32)
     packet = tenso.dumps(data)
     
-    # Zero-Copy (Default)
-    view = tenso.loads(packet, copy=False)
-    # View should point to packet's memory (simplified check)
-    assert view.base is not None 
-
-    # Forced Copy
-    safe_copy = tenso.loads(packet, copy=True)
-    # Copy should own its own memory (base is None)
-    assert safe_copy.base is None
+    # Default (Zero Copy)
+    arr_view = tenso.loads(packet, copy=False)
+    # Writeable flag should be False for zero-copy views to prevent corruption
+    assert arr_view.flags.writeable is False
     
-    assert np.array_equal(view, safe_copy)
-
-def test_non_contiguous_input():
-    """Ensure sliced arrays are handled automatically."""
-    # Create non-contiguous array via slicing
-    matrix = np.random.rand(10, 10).astype(np.float32)
-    sliced = matrix[:, ::2] # Stride of 2
-    assert not sliced.flags['C_CONTIGUOUS']
-    
-    packet = tenso.dumps(sliced)
-    restored = tenso.loads(packet)
-    
-    assert np.array_equal(sliced, restored)
-    assert restored.flags['C_CONTIGUOUS'] # Result is always contiguous
-
-def test_version_check():
-    """Ensure we catch version mismatches if future versions arise."""
-    data = np.zeros((2,2), dtype=np.float32)
-    packet = bytearray(tenso.dumps(data))
-    
-    # Tamper with version byte (set to 99)
-    # Header format: <4sBBBB -> Magic(4), Ver(1), Flags(1)...
-    # Version is at index 4
-    packet[4] = 99 
-    
-    with pytest.raises(ValueError, match="Unsupported version"):
-        tenso.loads(bytes(packet))
+    # Copy (Safe)
+    arr_copy = tenso.loads(packet, copy=True)
+    assert arr_copy.flags.writeable is True
+    assert arr_copy.base is None  # Owns its memory

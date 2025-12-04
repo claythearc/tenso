@@ -17,11 +17,11 @@ It avoids the massive CPU overhead of standard formats (JSON, Pickle, MsgPack) b
 
 | Format | Read Time | Write Time | Status |
 | :--- | :--- | :--- | :--- |
-| **Tenso** | **0.006 ms** | **6.76 ms** | **Fastest & AVX-512 Safe** |
-| **Arrow** | 0.009 ms | 8.54 ms | Heavy Dependency |
-| **Pickle** | 2.98 ms | 3.19 ms | Unsafe (Security Risk) |
-| **Safetensors** | 3.23 ms | 9.41 ms | - |
-| **JSON** | ∞ | ∞ | Too slow to measure |
+| **Tenso** | **0.006 ms** | **5.287 ms** | **Fastest & AVX-512 Safe** |
+| **Arrow** | 0.007 ms | 7.368 ms | Heavy Dependency |
+| **Pickle** | 2.670 ms | 2.773 ms | Unsafe (Security Risk) |
+| **Safetensors** | 2.489 ms | 7.747 ms | - |
+| **MsgPack** | 2.536 ms | 10.830 ms | - |
 
 
 
