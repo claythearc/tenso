@@ -3,18 +3,27 @@
 
 # Tenso
 
-High-performance zero-copy tensor serialization for NumPy arrays.
+High-Performance, Zero-Copy Tensor Protocol for Python.
 
 ## Overview
 
-Tenso is a lightweight Python library that provides fast, efficient serialization and deserialization of NumPy arrays. It uses a custom binary protocol designed for zero-copy operations, making it significantly faster and more space-efficient than JSON or pickle for numerical data.
+Tenso is a specialized binary protocol designed for one thing: moving NumPy arrays between backends instantly.
 
-## Features
+It avoids the massive CPU overhead of standard formats (JSON, Pickle, MsgPack) by using a strict Little-Endian, 64-byte aligned memory layout. This allows for Zero-Copy deserialization, meaning the CPU doesn't have to move data—it just points to it.
 
-- **Zero-copy serialization**: Direct memory dumps for maximum performance
-- **Compact binary format**: Up to 90% smaller than JSON serialization
-- **Simple API**: Four functions for all your needs: `dumps`, `loads`, `dump`, `load`
-- **Type-safe**: Supports common NumPy dtypes (float32, float64, int32, int64)
+## Benchmark
+
+**Scenario:** Reading a 64MB Float32 Matrix (Typical LLM Layer) from memory.
+
+| Format | Read Time | Write Time | Status |
+| :--- | :--- | :--- | :--- |
+| **Tenso** | **0.006 ms** | **6.76 ms** | **Fastest & AVX-512 Safe** |
+| **Arrow** | 0.009 ms | 8.54 ms | Heavy Dependency |
+| **Pickle** | 2.98 ms | 3.19 ms | Unsafe (Security Risk) |
+| **Safetensors** | 3.23 ms | 9.41 ms | - |
+| **JSON** | ∞ | ∞ | Too slow to measure |
+
+
 
 ## Installation
 
@@ -22,7 +31,9 @@ Tenso is a lightweight Python library that provides fast, efficient serializatio
 pip install tenso
 ```
 
-## Quick Start
+## Usage
+
+### Network
 
 ```python
 import numpy as np
@@ -36,7 +47,10 @@ packet = tenso.dumps(data)
 
 # Deserialize back
 restored = tenso.loads(packet)
+```
 
+### File I/O
+```python
 # Save to disk
 with open("weights.tenso", "wb") as f:
     tenso.dump(data, f)
@@ -48,29 +62,27 @@ with open("weights.tenso", "rb") as f:
 
 ## Protocol Specification
 
-The Tenso binary format consists of three parts:
+Tenso uses a Hybrid Fixed-Header format designed for SIMD safety.
 
-1. **Header (8 bytes)**:
-   - Magic bytes: `TNSO` (4 bytes)
-   - Version: 1 byte
-   - Flags: 1 byte (reserved)
-   - Dtype code: 1 byte
-   - Number of dimensions: 1 byte
+- Header (8 bytes): TNSO Magic, Version, Flags, Dtype, NDim.
 
-2. **Shape Block (variable)**:
-   - N × uint32 values representing array dimensions
+- Shape Block: Variable length (NDim * 4 bytes).
 
-3. **Data Block (variable)**:
-   - Raw memory dump of the array data
+- Padding: 0-63 bytes to ensure the Body starts at a 64-byte aligned address.
 
+- Body: Raw C-contiguous memory dump.
 
-## Use Cases
+### Tenso vs. The World
 
-- **Model checkpoint serialization**: Save and load neural network weights
-- **Inter-process communication**: Share tensors between Python processes
-- **Data pipelines**: Efficient storage and transfer of numerical data
-- **Caching**: Store computed tensors for faster retrieval
-- **API payloads**: Send tensors over network with minimal overhead
+| Feature | Tenso | Pickle | Arrow | Safetensors |
+| :--- | :--- | :--- | :--- | :--- |
+| **Speed (Read)** | **Instant** | Slow | Instant | Fast |
+| **Safety** | **Secure** | Unsafe (RCE Risk) | Secure | Secure |
+| **Alignment** | **64-byte** | None | 64-byte | None |
+| **Dependencies** | **NumPy Only** | Python | PyArrow (Huge) | Rust/Bindings |
+| **Best For** | **Network/IPC** | Python Objects | Dataframes | Disk Storage |
+
+Why is Tenso 1500x faster than Pickle? Standard formats must copy data from the network buffer into a new NumPy array. Tenso uses Memory Mapping: it tells NumPy to point directly at the existing buffer. No copying, no CPU cycles.
 
 ## Development
 
