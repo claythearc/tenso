@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.4.6 (2025-12-14)
+
+### Bug Fixes
+
+- Update release workflow name and enhance steps for Python package publishing
+  ([`a162131`](https://github.com/Khushiyant/tenso/commit/a16213162fda1ea0048c54e8d9b414064d084284))
+
+
 ## v0.4.5 (2025-12-14)
 
 ### Bug Fixes
