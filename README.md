@@ -21,15 +21,29 @@ Tenso isn't just about speed; it's about resource efficiency.
 
 ## Benchmark
 
-**Scenario:** Reading a 64MB Float32 Matrix (Typical LLM Layer) from memory.
+**Scenario 1: Large Matrix (64MB Float32)**
+Reading from memory/disk.
 
-| Format | Read Time | Write Time | Status |
+| Format | Read Time | Throughput | Status |
 | :--- | :--- | :--- | :--- |
-| **Tenso** | **0.006 ms** | **5.287 ms** | **Fastest & AVX-512 Safe** |
-| **Arrow** | 0.007 ms | 7.368 ms | Heavy Dependency |
-| **Pickle** | 2.670 ms | 2.773 ms | Unsafe (Security Risk) |
-| **Safetensors** | 2.489 ms | 7.747 ms | - |
-| **MsgPack** | 2.536 ms | 10.830 ms | - |
+| **Tenso** | **0.003 ms** | **21 GB/s** | **Instant** |
+| **Arrow** | 0.009 ms | 7.1 GB/s | Fast |
+| **Pickle** | 3.097 ms | 20 MB/s | Slow |
+
+**Scenario 2: Stream Throughput (95MB Packet)**
+Reading from a continuous data stream.
+
+| Method | Time | Throughput |
+| :--- | :--- | :--- |
+| **Tenso (read_stream)** | **18.78 ms** | **5,078 MB/s** |
+| **Standard Loop** | 6552.08 ms | 14 MB/s |
+
+**Scenario 3: High-Frequency Stream (1KB Tensor)**
+Writing to a socket (simulating low-latency robotics/gaming).
+
+| Method | Writes/Sec | Latency |
+| :--- | :--- | :--- |
+| **Tenso (write_stream)** | **198,448** | **5.0 μs** |
 
 
 
@@ -40,6 +54,42 @@ pip install tenso
 ```
 
 ## Usage
+
+### Network (Sockets & Pipes)
+
+```python
+import numpy as np
+import tenso
+import socket
+
+# --- SENDER (Client) ---
+# Uses os.writev for atomic, single-syscall writes
+data = np.random.rand(100, 100).astype(np.float32)
+tenso.write_stream(data, client_socket)
+
+# --- RECEIVER (Server) ---
+# Uses readinto() for zero-allocation buffering
+tensor = tenso.read_stream(conn)
+
+if tensor is None:
+    print("Connection closed")
+```
+
+### Basic Serialisation
+
+```python
+import numpy as np
+import tenso
+
+# Create a tensor
+data = np.random.rand(100, 100).astype(np.float32)
+
+# Serialize to bytes
+packet = tenso.dumps(data)
+
+# Deserialize back
+restored = tenso.loads(packet)
+```
 
 ### Network
 
