@@ -1,7 +1,18 @@
 # CHANGELOG
 
 
+## v0.4.5 (2025-12-14)
+
+### Bug Fixes
+
+- Optimize _read_exact function and clean up error handling
+  ([`d1b3033`](https://github.com/Khushiyant/tenso/commit/d1b30331e52adb60ed6511ff3e2fcd4e01d7f8b1))
+
+
 ## v0.1.0 (2025-12-14)
+
+
+## v0.4.4 (2025-12-14)
 
 ### Bug Fixes
 
