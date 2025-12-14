@@ -8,6 +8,8 @@ import socket
 import threading
 import tempfile
 import struct
+import sys
+import psutil
 import numpy as np
 import tenso
 
@@ -18,6 +20,24 @@ try:
     from safetensors.numpy import save as st_save, load as st_load
 except ImportError:
     print("Warning: Missing benchmark dependencies (msgpack, pyarrow, safetensors). Some tests skipped.")
+
+# --- HELPER: Resource Monitoring ---
+
+class ResourceMonitor:
+    """Monitor CPU and memory during benchmarks."""
+    def __init__(self):
+        self.process = psutil.Process()
+        self.baseline_memory = self.process.memory_info().rss / 1024 / 1024
+        
+    def snapshot(self):
+        return {
+            'memory_mb': self.process.memory_info().rss / 1024 / 1024,
+            'cpu_percent': self.process.cpu_percent()
+        }
+    
+    def memory_delta(self):
+        current = self.process.memory_info().rss / 1024 / 1024
+        return current - self.baseline_memory
 
 # --- 1. SERIALIZATION BENCHMARK HELPERS ---
 
@@ -244,16 +264,337 @@ def run_stream_write():
     print(f"Throughput: {COUNT/t_total:.0f} packets/sec")
     print(f"Latency:    {(t_total/COUNT)*1_000_000:.1f} µs/packet")
 
+def run_memory_overhead():
+    """NEW: Benchmark memory overhead of different formats."""
+    print("\n" + "="*80)
+    print("BENCHMARK 5: MEMORY OVERHEAD (Serialization Overhead)")
+    print("="*80)
+    
+    shapes = [
+        (1000, 1000),
+        (2000, 2000), 
+        (4000, 4000)
+    ]
+    
+    print(f"{'SIZE':<15} | {'FORMAT':<12} | {'RAW (MB)':<10} | {'SERIALIZED (MB)':<15} | {'OVERHEAD':<10}")
+    print("-" * 80)
+    
+    for shape in shapes:
+        data = np.random.rand(*shape).astype(np.float32)
+        raw_size = data.nbytes / 1024 / 1024
+        
+        results = {}
+        
+        # Tenso
+        packet = tenso.dumps(data)
+        results['Tenso'] = len(packet) / 1024 / 1024
+        
+        # Pickle
+        packet = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+        results['Pickle'] = len(packet) / 1024 / 1024
+        
+        # Arrow
+        if 'pa' in globals():
+            arr = pa.array(data.flatten())
+            batch = pa.RecordBatch.from_arrays([arr], names=['t'])
+            sink = pa.BufferOutputStream()
+            with pa.ipc.new_stream(sink, batch.schema) as writer:
+                writer.write_batch(batch)
+            results['Arrow'] = len(sink.getvalue()) / 1024 / 1024
+        
+        # SafeTensors
+        if 'st_save' in globals():
+            packet = st_save({"t": data})
+            results['Safetensors'] = len(packet) / 1024 / 1024
+        
+        for name, size in results.items():
+            overhead = ((size - raw_size) / raw_size) * 100
+            print(f"{str(shape):<15} | {name:<12} | {raw_size:>8.2f} | {size:>13.2f} | {overhead:>8.2f}%")
+        
+        print("-" * 80)
+
+def run_cpu_usage():
+    """NEW: Measure CPU usage during serialization/deserialization."""
+    print("\n" + "="*80)
+    print("BENCHMARK 6: CPU USAGE (Resource Efficiency)")
+    print("="*80)
+    
+    data = np.random.rand(4096, 4096).astype(np.float32)
+    monitor = ResourceMonitor()
+    
+    print(f"{'FORMAT':<15} | {'SERIALIZE CPU%':<15} | {'DESERIALIZE CPU%':<18}")
+    print("-" * 60)
+    
+    formats = {
+        'Tenso': (tenso.dumps, tenso.loads),
+        'Pickle': (lambda x: pickle.dumps(x, protocol=pickle.HIGHEST_PROTOCOL), pickle.loads)
+    }
+    
+    if 'pa' in globals():
+        def arrow_enc(x):
+            arr = pa.array(x.flatten())
+            batch = pa.RecordBatch.from_arrays([arr], names=['t'])
+            sink = pa.BufferOutputStream()
+            with pa.ipc.new_stream(sink, batch.schema) as writer:
+                writer.write_batch(batch)
+            return sink.getvalue()
+        
+        def arrow_dec(x):
+            with pa.ipc.open_stream(x) as reader:
+                batch = reader.read_next_batch()
+                return batch.column(0).to_numpy(zero_copy_only=False).reshape(data.shape)
+        
+        formats['Arrow'] = (arrow_enc, arrow_dec)
+    
+    if 'st_save' in globals():
+        formats['Safetensors'] = (lambda x: st_save({"t": x}), lambda x: st_load(x)["t"])
+    
+    for name, (enc, dec) in formats.items():
+        # Warmup
+        packet = enc(data)
+        _ = dec(packet)
+        
+        # Measure serialization CPU
+        monitor.process.cpu_percent()  # Reset
+        time.sleep(0.1)
+        for _ in range(20):
+            _ = enc(data)
+        ser_cpu = monitor.process.cpu_percent()
+        
+        # Measure deserialization CPU
+        monitor.process.cpu_percent()  # Reset
+        time.sleep(0.1)
+        for _ in range(20):
+            _ = dec(packet)
+        des_cpu = monitor.process.cpu_percent()
+        
+        print(f"{name:<15} | {ser_cpu:>13.1f}% | {des_cpu:>16.1f}%")
+
+def run_dtype_coverage():
+    """NEW: Test all supported dtypes."""
+    print("\n" + "="*80)
+    print("BENCHMARK 7: DTYPE COVERAGE (Compatibility Test)")
+    print("="*80)
+    
+    dtypes = [
+        np.float16, np.float32, np.float64,
+        np.int8, np.int16, np.int32, np.int64,
+        np.uint8, np.uint16, np.uint32, np.uint64,
+        np.bool_, np.complex64, np.complex128
+    ]
+    
+    shape = (100, 100)
+    
+    print(f"{'DTYPE':<15} | {'STATUS':<10} | {'SIZE (KB)':<12} | {'ROUNDTRIP (ms)':<15}")
+    print("-" * 65)
+    
+    for dtype in dtypes:
+        try:
+            if dtype == np.bool_:
+                data = np.random.randint(0, 2, shape).astype(dtype)
+            elif np.issubdtype(dtype, np.integer):
+                data = np.random.randint(0, 100, shape).astype(dtype)
+            elif np.issubdtype(dtype, np.complexfloating):
+                real = np.random.randn(*shape)
+                imag = np.random.randn(*shape)
+                data = (real + 1j * imag).astype(dtype)
+            else:
+                data = np.random.randn(*shape).astype(dtype)
+            
+            t0 = time.perf_counter()
+            packet = tenso.dumps(data)
+            restored = tenso.loads(packet)
+            roundtrip = (time.perf_counter() - t0) * 1000
+            
+            if np.array_equal(data, restored):
+                status = "✓ PASS"
+            else:
+                status = "✗ FAIL"
+            
+            size_kb = len(packet) / 1024
+            print(f"{str(dtype):<15} | {status:<10} | {size_kb:>10.2f} | {roundtrip:>13.3f}")
+            
+        except Exception as e:
+            print(f"{str(dtype):<15} | {'✗ ERROR':<10} | {'-':<12} | {str(e)[:20]}")
+    
+    print("-" * 65)
+
+def run_arrow_comparison():
+    """NEW: Detailed Arrow vs Tenso comparison."""
+    print("\n" + "="*80)
+    print("BENCHMARK 8: ARROW vs TENSO (Head-to-Head)")
+    print("="*80)
+    
+    if 'pa' not in globals():
+        print("Arrow not available. Skipping.")
+        return
+    
+    sizes = [
+        ("Small", (512, 512)),
+        ("Medium", (2048, 2048)),
+        ("Large", (4096, 4096)),
+        ("XLarge", (8192, 8192))
+    ]
+    
+    print(f"{'SIZE':<10} | {'TENSO SER':<12} | {'ARROW SER':<12} | {'TENSO DES':<12} | {'ARROW DES':<12} | {'SPEEDUP':<10}")
+    print("-" * 95)
+    
+    for name, shape in sizes:
+        data = np.random.rand(*shape).astype(np.float32)
+        
+        # Tenso
+        t0 = time.perf_counter()
+        tenso_packet = tenso.dumps(data)
+        tenso_ser = (time.perf_counter() - t0) * 1000
+        
+        t0 = time.perf_counter()
+        _ = tenso.loads(tenso_packet)
+        tenso_des = (time.perf_counter() - t0) * 1000
+        
+        # Arrow
+        arr = pa.array(data.flatten())
+        batch = pa.RecordBatch.from_arrays([arr], names=['t'])
+        
+        t0 = time.perf_counter()
+        sink = pa.BufferOutputStream()
+        with pa.ipc.new_stream(sink, batch.schema) as writer:
+            writer.write_batch(batch)
+        arrow_packet = sink.getvalue()
+        arrow_ser = (time.perf_counter() - t0) * 1000
+        
+        t0 = time.perf_counter()
+        with pa.ipc.open_stream(arrow_packet) as reader:
+            batch = reader.read_next_batch()
+            _ = batch.column(0).to_numpy(zero_copy_only=False).reshape(shape)
+        arrow_des = (time.perf_counter() - t0) * 1000
+        
+        speedup = arrow_des / tenso_des
+        
+        print(f"{name:<10} | {tenso_ser:>10.3f}ms | {arrow_ser:>10.3f}ms | {tenso_des:>10.3f}ms | {arrow_des:>10.3f}ms | {speedup:>8.1f}x")
+    
+    print("-" * 95)
+
+def run_correctness():
+    """NEW: Verify data integrity."""
+    print("\n" + "="*80)
+    print("BENCHMARK 9: CORRECTNESS (Data Integrity)")
+    print("="*80)
+    
+    tests = [
+        ("Zeros", lambda: np.zeros((100, 100), dtype=np.float32)),
+        ("Ones", lambda: np.ones((100, 100), dtype=np.float32)),
+        ("Random", lambda: np.random.rand(100, 100).astype(np.float32)),
+        ("Negative", lambda: -np.random.rand(100, 100).astype(np.float32)),
+        ("Mixed", lambda: np.random.randn(100, 100).astype(np.float32)),
+        ("Large Values", lambda: np.random.rand(100, 100).astype(np.float32) * 1e6),
+        ("Small Values", lambda: np.random.rand(100, 100).astype(np.float32) * 1e-6),
+    ]
+    
+    print(f"{'TEST':<20} | {'STATUS':<10} | {'MAX ERROR':<15}")
+    print("-" * 55)
+    
+    for name, gen_func in tests:
+        data = gen_func()
+        packet = tenso.dumps(data)
+        restored = tenso.loads(packet)
+        
+        if np.allclose(data, restored, rtol=1e-7, atol=1e-7):
+            max_error = np.abs(data - restored).max()
+            print(f"{name:<20} | {'✓ PASS':<10} | {max_error:<15.2e}")
+        else:
+            print(f"{name:<20} | {'✗ FAIL':<10} | {'MISMATCH':<15}")
+    
+    print("-" * 55)
+
+def print_summary():
+    """Print system info and summary."""
+    print("\n" + "="*80)
+    print("SYSTEM INFORMATION")
+    print("="*80)
+    print(f"Python Version: {sys.version.split()[0]}")
+    print(f"NumPy Version:  {np.__version__}")
+    print(f"Tenso Version:  {tenso.__version__ if hasattr(tenso, '__version__') else 'unknown'}")
+    print(f"CPU Cores:      {psutil.cpu_count()}")
+    print(f"Total Memory:   {psutil.virtual_memory().total / 1024**3:.1f} GB")
+    print(f"Platform:       {sys.platform}")
+    
+    if 'pa' in globals():
+        print(f"Arrow Version:  {pa.__version__}")
+    print("="*80)
+
 # --- MAIN ---
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Tenso Benchmarks")
-    parser.add_argument("mode", nargs="?", choices=["all", "ser", "io", "read", "write"], default="all",
-                        help="Benchmark mode: ser (Serialization), io (Disk), read (Stream Read), write (Stream Write)")
+    parser = argparse.ArgumentParser(
+        description="Tenso Comprehensive Benchmarks",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Benchmark Modes:
+  all         - Run all benchmarks (default)
+  ser         - Serialization speed
+  io          - Disk I/O performance
+  read        - Stream reading
+  write       - Network writing
+  memory      - Memory overhead
+  cpu         - CPU usage
+  dtypes      - Dtype coverage
+  arrow       - Arrow comparison
+  correctness - Data integrity
+  quick       - Quick overview (ser + arrow)
+        """
+    )
+    
+    parser.add_argument(
+        "mode", 
+        nargs="?", 
+        choices=["all", "ser", "io", "read", "write", "memory", "cpu", "dtypes", "arrow", "correctness", "quick"], 
+        default="all",
+        help="Benchmark mode to run"
+    )
+    
+    parser.add_argument(
+        "--no-summary",
+        action="store_true",
+        help="Skip system information summary"
+    )
     
     args = parser.parse_args()
     
-    if args.mode in ["all", "ser"]: run_serialization()
-    if args.mode in ["all", "io"]: run_io()
-    if args.mode in ["all", "read"]: run_stream_read()
-    if args.mode in ["all", "write"]: run_stream_write()
+    if not args.no_summary:
+        print_summary()
+    
+    if args.mode == "all":
+        run_serialization()
+        run_io()
+        run_stream_read()
+        run_stream_write()
+        run_memory_overhead()
+        run_cpu_usage()
+        run_dtype_coverage()
+        run_arrow_comparison()
+        run_correctness()
+    elif args.mode == "quick":
+        run_serialization()
+        run_arrow_comparison()
+    elif args.mode == "ser":
+        run_serialization()
+    elif args.mode == "io":
+        run_io()
+    elif args.mode == "read":
+        run_stream_read()
+    elif args.mode == "write":
+        run_stream_write()
+    elif args.mode == "memory":
+        run_memory_overhead()
+    elif args.mode == "cpu":
+        run_cpu_usage()
+    elif args.mode == "dtypes":
+        run_dtype_coverage()
+    elif args.mode == "arrow":
+        run_arrow_comparison()
+    elif args.mode == "correctness":
+        run_correctness()
+    
+    print("\n" + "="*80)
+    print("BENCHMARKS COMPLETE")
+    print("="*80)
