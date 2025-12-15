@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.5.1 (2025-12-15)
+
+### Bug Fixes
+
+- Correct section header for optional dependencies in pyproject.toml
+  ([`8ec6743`](https://github.com/Khushiyant/tenso/commit/8ec6743cce35b0bb474fec75c93aadf9de823179))
+
+
 ## v0.5.0 (2025-12-15)
 
 ### Chores
