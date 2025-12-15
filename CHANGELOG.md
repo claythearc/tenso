@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v0.5.0 (2025-12-15)
+
+### Chores
+
+- Add resource monitoring benchmarks and enhance argument parser for comprehensive testing
+  ([`a42c700`](https://github.com/Khushiyant/tenso/commit/a42c7006baf4693622ec91127c17ac6ff7a6f699))
+
+### Documentation
+
+- Enhance README.md with detailed benchmarks, usage examples, and performance comparisons
+  ([`09967f5`](https://github.com/Khushiyant/tenso/commit/09967f579daec9af3f779839bb7dc5a3c29db92d))
+
+- Update README.md with enhanced benchmark scenarios and usage examples for network streaming and
+  serialization
+  ([`6d41b22`](https://github.com/Khushiyant/tenso/commit/6d41b22174d0e7869631713f615597c71a489913))
+
+### Features
+
+- Implement async zero-copy read stream and enhance core serialization methods
+  ([`9a4ce40`](https://github.com/Khushiyant/tenso/commit/9a4ce40da239c9e31d69d02dac48b9053dba2ed7))
+
+
 ## v0.4.7 (2025-12-14)
 
 ### Bug Fixes
