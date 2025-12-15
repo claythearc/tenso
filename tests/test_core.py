@@ -3,7 +3,7 @@ import numpy as np
 import tenso
 import tempfile
 import os
-
+import io
 # --- Core Functionality Tests ---
 
 @pytest.mark.parametrize("dtype", [
@@ -136,3 +136,44 @@ def test_copy_flag():
     arr_copy = tenso.loads(packet, copy=True)
     assert arr_copy.flags.writeable is True
     assert arr_copy.base is None  # Owns its memory
+
+def test_copy_flag():
+    """Verify copy=True behavior."""
+    data = np.zeros((10,), dtype=np.float32)
+    packet = tenso.dumps(data)
+    
+    # Default (Zero Copy)
+    arr_view = tenso.loads(packet, copy=False)
+    # The new safety feature enforces writeable=False for views
+    assert arr_view.flags.writeable is False
+    
+    # Copy (Safe)
+    arr_copy = tenso.loads(packet, copy=True)
+    assert arr_copy.flags.writeable is True
+    assert arr_copy.base is None
+
+def test_dumps_return_type():
+    """Verify dumps returns a memoryview that acts like bytes."""
+    data = np.zeros((10,), dtype=np.float32)
+    packet = tenso.dumps(data)
+    
+    # Should be memoryview
+    assert isinstance(packet, memoryview)
+    
+    # Should be usable in write()
+    with io.BytesIO() as f:
+        f.write(packet)
+        assert f.getvalue() == bytes(packet)
+
+def test_dumps_strict_and_copy():
+    """Verify that strict mode and copy mechanisms work with new buffer."""
+    # Non-contiguous
+    data = np.zeros((10, 10), order='F')
+    
+    with pytest.raises(ValueError, match="Tensor is not C-Contiguous"):
+        tenso.dumps(data, strict=True)
+        
+    # Should work without strict
+    packet = tenso.dumps(data, strict=False)
+    restored = tenso.loads(packet)
+    assert np.array_equal(data, restored)

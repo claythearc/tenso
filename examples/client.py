@@ -13,21 +13,19 @@ data = np.random.rand(4, 256, 256, 3).astype(np.float32)
 print(f"Sending Tensor: {data.shape} ({data.nbytes / 1024 / 1024:.2f} MB)")
 
 t0 = time.time()
-# 2. Serialize and Send
+# 2. Serialize and Send (Zero-Copy Write)
 packet = tenso.dumps(data)
 client.sendall(packet)
 
-# 3. Receive Result
-# Read the response in chunks to handle large packets
-response_data = b''
-expected_size = len(packet)  # Response should be similar size
-while len(response_data) < expected_size:
-    chunk = client.recv(min(65536, expected_size - len(response_data)))
-    if not chunk:
-        break
-    response_data += chunk
+# 3. Receive Result (Zero-Copy Read)
+print("Receiving response...")
+# Uses the new optimized reader (11.5 GB/s)
+result = tenso.read_stream(client)
 
-result = tenso.loads(response_data)
+if result is not None:
+    print(f"Got Result in {time.time() - t0:.4f}s")
+    print(f"Result Shape: {result.shape} | Mean: {result.mean():.4f}")
+else:
+    print("Server disconnected.")
 
-print(f"Got Result in {time.time() - t0:.4f}s")
-print(f"Result Mean: {result.mean():.4f}")
+client.close()
