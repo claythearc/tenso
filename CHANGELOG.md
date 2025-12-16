@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v0.6.0 (2025-12-16)
+
+### Chores
+
+- Add GitHub Actions workflow for documentation generation and deployment
+  ([`8ab1c43`](https://github.com/Khushiyant/tenso/commit/8ab1c43f0ca36c816dd313bb253902153405289f))
+
+### Documentation
+
+- Add Sphinx documentation makefiles and update API references
+  ([`3216226`](https://github.com/Khushiyant/tenso/commit/3216226b536b07545d87f55d207b0c412f46e648))
+
+### Features
+
+- Add GPU support with read_to_device function and corresponding tests
+  ([`31bed37`](https://github.com/Khushiyant/tenso/commit/31bed371e86d55635c4db8ac49eed824204703c0))
+
+### Refactoring
+
+- Remove benchmark_io.py and update pyproject.toml for GPU dependencies
+  ([`2f06485`](https://github.com/Khushiyant/tenso/commit/2f064850fd5d015814fc5e2d76b0f089a9aa72d9))
+
+
 ## v0.5.1 (2025-12-15)
 
 ### Bug Fixes
