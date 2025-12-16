@@ -7,15 +7,29 @@ from .core import _read_into_buffer
 # --- BACKEND DETECTION ---
 BACKEND = None
 
+# --- BACKEND DETECTION ---
+# We try to import both to ensure type hints work (especially for Sphinx)
 try:
     import cupy as cp
-    BACKEND = 'cupy'
+    HAS_CUPY = True
 except ImportError:
-    try:
-        import torch
-        BACKEND = 'torch'
-    except ImportError:
-        pass
+    cp = None
+    HAS_CUPY = False
+
+try:
+    import torch
+    HAS_TORCH = True
+except ImportError:
+    torch = None
+    HAS_TORCH = False
+
+# Determine active backend (prefer CuPy if available)
+if HAS_CUPY:
+    BACKEND = 'cupy'
+elif HAS_TORCH:
+    BACKEND = 'torch'
+else:
+    BACKEND = None
 
 def _get_allocator(size: int) -> Tuple[np.ndarray, Any]:
     """

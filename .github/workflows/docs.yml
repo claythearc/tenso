@@ -39,7 +39,7 @@ jobs:
       - name: Build Sphinx Documentation
         run: |
           cd docs
-          # Treat warnings as errors (-W) to catch broken links/docstrings
+          mkdir -p source/_static 
           uv run sphinx-build -M html source build -W
 
       - name: Upload artifact
