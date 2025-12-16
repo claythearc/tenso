@@ -302,7 +302,7 @@ Contributions welcome. Areas we'd love help with:
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file.
+MIT License - see [License](https://github.com/Khushiyant/tenso/blob/main/LICENSE) file.
 
 ---
 

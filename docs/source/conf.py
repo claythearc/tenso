@@ -10,6 +10,13 @@ copyright = '2025, Khushiyant'
 author = 'Khushiyant'
 release = '0.5.1'
 
+# Mock heavy dependencies so docs can build without installing CUDA/Torch
+autodoc_mock_imports = [
+    "cupy", 
+    "torch", 
+    "numpy"  # Optional: speeds up build if you don't need numpy internals
+]
+
 # Extensions
 extensions = [
     'sphinx.ext.autodoc',      # Core library for html generation
