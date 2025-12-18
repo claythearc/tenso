@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v0.6.1 (2025-12-18)
+
+### Bug Fixes
+
+- Correct tensor view and reshape logic in read_to_device function; improve mock assertions in tests
+  ([`55ecd84`](https://github.com/Khushiyant/tenso/commit/55ecd84430b9ca5d8c528241730692b7c49d5bea))
+
+### Chores
+
+- Add scripts for documentation generation and benchmarking
+  ([`74f4bc9`](https://github.com/Khushiyant/tenso/commit/74f4bc91317a4c91bc066a7118fca50cf5d7461f))
+
+- Enhance project metadata retrieval in Sphinx configuration and improve backend detection logic
+  ([`dc294d5`](https://github.com/Khushiyant/tenso/commit/dc294d53ba3560d4cebf7eabaab0d32cc8722e79))
+
+- Update GitHub Actions workflow for documentation build and deployment
+  ([`f555a65`](https://github.com/Khushiyant/tenso/commit/f555a65cc3988113289e8bbbeb4953c743222398))
+
+- Update README and documentation scripts; remove unused scripts and add mock imports for
+  dependencies
+  ([`3d5fc9c`](https://github.com/Khushiyant/tenso/commit/3d5fc9c2aa173bef54272338eda426573468a868))
+
+
 ## v0.6.0 (2025-12-16)
 
 ### Chores
