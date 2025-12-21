@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## v0.7.0 (2025-12-21)
+
+### Features
+
+- Add iter_dumps function for zero-copy serialization; optimize read_stream and write_stream for
+  efficiency
+  ([`8956566`](https://github.com/Khushiyant/tenso/commit/89565661d7742dc7c7a4831a78b7791ce62c56ca))
+
+
 ## v0.6.1 (2025-12-18)
 
 ### Bug Fixes
