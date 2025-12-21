@@ -2,65 +2,42 @@ import asyncio
 import numpy as np
 import struct
 import math
+from typing import Union
 from .core import loads, _REV_DTYPE_MAP, _MAGIC, _ALIGNMENT
 
-async def aread_stream(reader: asyncio.StreamReader) -> np.ndarray:
+
+async def aread_stream(reader: asyncio.StreamReader) -> Union[np.ndarray, None]:
     """
-    Asynchronously read a Tenso packet from an asyncio StreamReader using zero-copy buffering.
-
-    Designed for FastAPI/asyncio servers. Reads directly from the stream into a pre-allocated numpy buffer for efficiency.
-
-    Args:
-        reader: An asyncio.StreamReader to read from.
-
-    Returns:
-        np.ndarray: The deserialized numpy array, or None if EOF at start.
-
-    Raises:
-        asyncio.IncompleteReadError: If the stream ends unexpectedly during read.
-        ValueError: If the packet is invalid or dtype is unknown.
+    True Zero-Copy Async Read: Eliminates intermediate buffer copies.
     """
-    # 1. Read Header
     try:
         header = await reader.readexactly(8)
     except asyncio.IncompleteReadError as e:
-        if len(e.partial) == 0:
-            return None
-        raise e
+        if len(e.partial) == 0: return None
+        raise
 
     magic, ver, flags, dtype_code, ndim = struct.unpack('<4sBBBB', header)
-    if magic != _MAGIC: raise ValueError("Invalid tenso packet")
-
-    # 2. Read Shape
-    shape_len = ndim * 4
-    shape_bytes = await reader.readexactly(shape_len)
+    
+    # Read Shape
+    shape_bytes = await reader.readexactly(ndim * 4)
     shape = struct.unpack(f'<{ndim}I', shape_bytes)
-
-    # 3. Calculate Layout
-    dtype = _REV_DTYPE_MAP.get(dtype_code)
-    if dtype is None: raise ValueError(f"Unknown dtype: {dtype_code}")
-
-    current_pos = 8 + shape_len
+    
+    # Calculate Padding
+    current_pos = 8 + (ndim * 4)
     remainder = current_pos % _ALIGNMENT
     padding_len = 0 if remainder == 0 else (_ALIGNMENT - remainder)
     
-    body_len = int(math.prod(shape) * dtype.itemsize)
-    total_len = current_pos + padding_len + body_len
-
-    # 4. Allocate Buffer (Uninitialized)
-    full_buffer = np.empty(total_len, dtype=np.uint8)
-    
-    # Fill Header/Shape
-    full_buffer[0:8] = list(header)
-    full_buffer[8:8+shape_len] = list(shape_bytes)
-    
-    # 5. Read Body (Consume padding + Read Data)
+    # Consume Padding (Consistently discarded)
     if padding_len > 0:
         await reader.readexactly(padding_len)
 
+    # Read Body
+    dtype = _REV_DTYPE_MAP[dtype_code]
+    body_len = int(np.prod(shape) * dtype.itemsize)
     body_data = await reader.readexactly(body_len)
     
-    body_start = current_pos + padding_len
-    full_buffer[body_start:body_start+body_len] = np.frombuffer(body_data, dtype=np.uint8)
-
-    return loads(full_buffer)
+    # Optimization: np.frombuffer on 'bytes' is zero-copy in Python
+    # This avoids copying body_data into a pre-allocated full_buffer.
+    arr = np.frombuffer(body_data, dtype=dtype).reshape(shape)
+    arr.flags.writeable = False 
+    return arr

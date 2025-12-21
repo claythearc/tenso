@@ -12,8 +12,9 @@ Main API:
     - get_packet_info, is_aligned: Utilities for packet inspection and alignment.
 """
 
-from .core import dumps, loads, dump, load, read_stream, write_stream
+from .core import dumps, loads, dump, load, read_stream, write_stream, iter_dumps
 from .utils import get_packet_info, is_aligned
+
 
 # Optional Async support
 try:
@@ -27,8 +28,14 @@ try:
 except ImportError:
     read_to_device = None
 
+try:
+    from importlib.metadata import version as _version
+    __version__ = _version("tenso")
+except Exception:
+    __version__ = "0.6.1" # Fallback to pyproject.toml value
+
 __all__ = [
     "dumps", "loads", "dump", "load", 
     "read_stream", "write_stream", "aread_stream", "read_to_device",
-    "get_packet_info", "is_aligned"
+    "get_packet_info", "is_aligned", "iter_dumps"
 ]

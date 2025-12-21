@@ -1,6 +1,6 @@
 import struct
 import numpy as np
-from typing import BinaryIO, Union, Any
+from typing import BinaryIO, Union, Any, Generator, Union
 import math
 import mmap
 import sys
@@ -65,27 +65,12 @@ def _read_into_buffer(source: Any, buf: Union[bytearray, memoryview, np.ndarray]
 
 def read_stream(source: Any) -> Union[np.ndarray, None]:
     """
-    Read a tensor from a socket or file using zero-copy buffering.
-
-    Allocates a single uninitialized buffer and reads directly into it for efficiency.
-
-    Args:
-        source: The data source (socket or file-like object).
-
-    Returns:
-        np.ndarray or None: The deserialized tensor, or None if EOF at start.
-
-    Raises:
-        EOFError: If the stream ends unexpectedly during read.
-        ValueError: If the packet is invalid or dtype is unknown.
+    Optimized stream reader: Reduces syscalls by consolidating data reads.
     """
     # 1. Read Header (8 bytes)
     header = bytearray(8)
-    try:
-        if not _read_into_buffer(source, header):
-            return None
-    except EOFError as e:
-        raise EOFError("Stream ended during header read") from e
+    if not _read_into_buffer(source, header):
+        return None
         
     magic, ver, flags, dtype_code, ndim = struct.unpack('<4sBBBB', header)
     if magic != _MAGIC: raise ValueError("Invalid tenso packet")
@@ -93,77 +78,43 @@ def read_stream(source: Any) -> Union[np.ndarray, None]:
     # 2. Read Shape
     shape_len = ndim * 4
     shape_bytes = bytearray(shape_len)
-    try:
-        if not _read_into_buffer(source, shape_bytes):
-            raise EOFError("Stream ended during shape read")
-    except EOFError as e:
-        raise EOFError("Stream ended during shape read") from e
-    
+    if not _read_into_buffer(source, shape_bytes):
+        raise EOFError("Stream ended during shape read")
     shape = struct.unpack(f'<{ndim}I', shape_bytes)
     
     # 3. Calculate Layout
     dtype = _REV_DTYPE_MAP.get(dtype_code)
-    if dtype is None: raise ValueError(f"Unknown dtype: {dtype_code}")
-    
-    # Calculate padding required to align the body
     current_pos = 8 + shape_len
     remainder = current_pos % _ALIGNMENT
     padding_len = 0 if remainder == 0 else (_ALIGNMENT - remainder)
+    body_len = int(np.prod(shape) * dtype.itemsize)
     
-    body_len = int(math.prod(shape) * dtype.itemsize)
-    total_len = current_pos + padding_len + body_len
-    
-    # 4. Allocate ONE Uninitialized Buffer (Fastest)
-    # We use uint8 to manipulate the raw bytes first
-    full_buffer = np.empty(total_len, dtype=np.uint8)
-    
-    # Fill Header/Shape into the buffer (for loads compatibility)
-    full_buffer[0:8] = list(header)
-    full_buffer[8:8+shape_len] = list(shape_bytes)
-    
-    # 5. Read Padding (Consumption)
-    if padding_len > 0:
-        pad_view = full_buffer[current_pos : current_pos+padding_len]
-        try:
-            if not _read_into_buffer(source, pad_view):
-                raise EOFError("Stream ended during padding read")
-        except EOFError as e:
-            raise EOFError("Stream ended during padding read") from e
+    # 4. Consolidated Read: Padding + Body in ONE syscall
+    # We allocate a single buffer for the remainder of the packet
+    data_buffer = np.empty(padding_len + body_len, dtype=np.uint8)
+    if not _read_into_buffer(source, data_buffer):
+        raise EOFError("Stream ended during data read")
 
-    # 6. Read Body DIRECTLY into buffer
-    body_view = full_buffer[current_pos+padding_len:]
-    try:
-        if not _read_into_buffer(source, body_view):
-            raise EOFError("Stream ended during body read")
-    except EOFError as e:
-        raise EOFError("Stream ended during body read") from e
-
-    # 7. Zero-Copy Load
-    return loads(full_buffer)
+    # 5. Zero-Copy View
+    # Use offset to skip padding without slicing (which can create copies in some versions)
+    arr = np.frombuffer(data_buffer, dtype=dtype, offset=padding_len).reshape(shape)
+    arr.flags.writeable = False # Safety enforcement
+    return arr
 
 
 # --- Stream Helper (Write) ---
 
-def write_stream(tensor: np.ndarray, dest: Any, strict: bool = False) -> int:
+# Inside src/tenso/core.py
+
+def iter_dumps(tensor: np.ndarray, strict: bool = False) -> Generator[Union[bytes, memoryview], None, None]:
     """
-    Write a tensor to a socket or file using vectored I/O (os.writev if available).
-
-    Sends header, shape, and body in a single system call for atomicity and performance.
-
-    Args:
-        tensor: The numpy array to serialize and send.
-        dest: The destination (socket or file-like object).
-        strict: If True, require tensor to be C-contiguous.
-
-    Returns:
-        int: Number of bytes written.
-
-    Raises:
-        ValueError: If dtype is unsupported or tensor is not C-contiguous in strict mode.
+    Vectored serialization: Yields packet parts to avoid a full memory copy.
+    Ideal for use with socket.sendall() or os.writev().
     """
     if tensor.dtype not in _DTYPE_MAP:
         raise ValueError(f"Unsupported dtype: {tensor.dtype}")
     
+    # Ensure C-Contiguity (or fail if strict)
     if not tensor.flags['C_CONTIGUOUS']:
         if strict:
             raise ValueError("Tensor is not C-Contiguous")
@@ -176,27 +127,46 @@ def write_stream(tensor: np.ndarray, dest: Any, strict: bool = False) -> int:
     shape = tensor.shape
     ndim = len(shape)
     
-    current_len = 8 + ndim * 4
-    remainder = current_len % _ALIGNMENT
-    padding_size = 0 if remainder == 0 else (_ALIGNMENT - remainder)
-    
+    # 1. Header & Shape
     header = struct.pack('<4sBBBB', _MAGIC, _VERSION, 1, dtype_code, ndim)
     shape_block = struct.pack(f'<{ndim}I', *shape)
-    padding = b'\x00' * padding_size
+    yield header
+    yield shape_block
     
-    # 2. Try Atomic Vectored Write (Best for Sockets)
+    # 2. Alignment Padding (Fixed the current_pos typo here)
+    current_len = 8 + (ndim * 4)
+    remainder = current_len % _ALIGNMENT
+    padding_len = 0 if remainder == 0 else (_ALIGNMENT - remainder)
+    if padding_len > 0:
+        yield b'\x00' * padding_len
+        
+    # 3. Raw Data (Zero-Copy yield of the original buffer)
+    yield tensor.data
+
+def write_stream(tensor: np.ndarray, dest: Any, strict: bool = False) -> int:
+    """
+    Write a tensor to a destination using vectored I/O to avoid memory copies.
+    """
+    # Get all packet components without copying the large tensor body
+    chunks = list(iter_dumps(tensor, strict=strict))
+    
+    # Try Atomic Vectored Write (Best for Sockets/Files)
     if hasattr(dest, 'fileno'):
         try:
             fd = dest.fileno()
             if hasattr(os, 'writev'):
-                return os.writev(fd, [header, shape_block, padding, tensor.data])
+                # Send everything in a single syscall without merging buffers manually
+                return os.writev(fd, chunks)
         except (AttributeError, OSError):
             pass 
             
-    # 3. Fallback (Coalesced Write)
-    dest.write(header + shape_block + padding)
-    dest.write(tensor.data)
-    return len(header) + len(shape_block) + len(padding) + tensor.nbytes
+    # Fallback for generic file-like objects (e.g., io.BytesIO)
+    written = 0
+    for chunk in chunks:
+        dest.write(chunk)
+        written += len(chunk)
+    return written
+
 
 
 # --- Core Functions ---
@@ -319,14 +289,7 @@ def loads(data: Union[bytes, bytearray, memoryview, np.ndarray, mmap.mmap], copy
 
 def dump(tensor: np.ndarray, fp: BinaryIO, strict: bool = False) -> None:
     """
-    Serialize and write a tensor to a file-like object.
-
-    Alias for write_stream().
-
-    Args:
-        tensor: The numpy array to serialize.
-        fp: The file-like object to write to.
-        strict: If True, require tensor to be C-contiguous.
+    Serialize and write a tensor to a file-like object using the optimized stream path.
     """
     write_stream(tensor, fp, strict=strict)
 
