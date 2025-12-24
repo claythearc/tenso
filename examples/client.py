@@ -5,7 +5,7 @@ import time
 
 # Connect
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect(('localhost', 9999))
+client.connect(("localhost", 9999))
 
 # 1. Create a dummy image (Batch of 4)
 data = np.random.rand(4, 256, 256, 3).astype(np.float32)

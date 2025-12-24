@@ -30,12 +30,21 @@ except ImportError:
 
 try:
     from importlib.metadata import version as _version
+
     __version__ = _version("tenso")
 except Exception:
-    __version__ = "0.6.1" # Fallback to pyproject.toml value
+    __version__ = "0.6.1"  # Fallback to pyproject.toml value
 
 __all__ = [
-    "dumps", "loads", "dump", "load", 
-    "read_stream", "write_stream", "aread_stream", "read_to_device",
-    "get_packet_info", "is_aligned", "iter_dumps"
+    "dumps",
+    "loads",
+    "dump",
+    "load",
+    "read_stream",
+    "write_stream",
+    "aread_stream",
+    "read_to_device",
+    "get_packet_info",
+    "is_aligned",
+    "iter_dumps",
 ]

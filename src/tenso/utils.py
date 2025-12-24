@@ -3,6 +3,7 @@ import numpy as np
 import struct
 import ctypes
 
+
 def is_aligned(data: bytes, alignment: int = 64) -> bool:
     """
     Check if the given bytes data is aligned to the specified boundary.
@@ -14,7 +15,10 @@ def is_aligned(data: bytes, alignment: int = 64) -> bool:
     Returns:
         bool: True if the data is aligned, False otherwise.
     """
-    return (ctypes.addressof(ctypes.c_char.from_buffer(bytearray(data))) % alignment) == 0
+    return (
+        ctypes.addressof(ctypes.c_char.from_buffer(bytearray(data))) % alignment
+    ) == 0
+
 
 def get_packet_info(data: bytes) -> dict:
     """
@@ -41,23 +45,26 @@ def get_packet_info(data: bytes) -> dict:
     Raises:
         ValueError: If the packet is too short or invalid.
     """
-    if len(data) < 8: raise ValueError("Packet too short")
-    magic, ver, flags, dtype_code, ndim = struct.unpack('<4sBBBB', data[:8])
-    if magic != _MAGIC: raise ValueError("Invalid tenso packet")
-    
+    if len(data) < 8:
+        raise ValueError("Packet too short")
+    magic, ver, flags, dtype_code, ndim = struct.unpack("<4sBBBB", data[:8])
+    if magic != _MAGIC:
+        raise ValueError("Invalid tenso packet")
+
     shape_end = 8 + (ndim * 4)
-    if len(data) < shape_end: raise ValueError("Packet too short to contain shape")
-    shape = struct.unpack(f'<{ndim}I', data[8:shape_end])
+    if len(data) < shape_end:
+        raise ValueError("Packet too short to contain shape")
+    shape = struct.unpack(f"<{ndim}I", data[8:shape_end])
     dtype = _REV_DTYPE_MAP.get(dtype_code, None)
-    
+
     return {
-        'version': ver,
-        'dtype': dtype,
-        'shape': shape,
-        'ndim': ndim,
-        'flags': flags,
-        'aligned': bool(flags & 1),
-        'integrity_protected': bool(flags & FLAG_INTEGRITY),
-        'total_elements': int(np.prod(shape)),
-        'data_size_bytes': int(np.prod(shape)) * (dtype.itemsize if dtype else 0)
+        "version": ver,
+        "dtype": dtype,
+        "shape": shape,
+        "ndim": ndim,
+        "flags": flags,
+        "aligned": bool(flags & 1),
+        "integrity_protected": bool(flags & FLAG_INTEGRITY),
+        "total_elements": int(np.prod(shape)),
+        "data_size_bytes": int(np.prod(shape)) * (dtype.itemsize if dtype else 0),
     }

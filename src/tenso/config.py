@@ -1,46 +1,47 @@
 import numpy as np
 import sys
 
-_MAGIC = b'TNSO'  #: Magic number for Tenso packet header (bytes)
-_VERSION = 2      #: Protocol version (int)
-_ALIGNMENT = 64   #: Align body to 64-byte boundaries for AVX-512/SIMD (int)
+_MAGIC = b"TNSO"  #: Magic number for Tenso packet header (bytes)
+_VERSION = 2  #: Protocol version (int)
+_ALIGNMENT = 64  #: Align body to 64-byte boundaries for AVX-512/SIMD (int)
 
 # --- Security Limits (DoS Protection) ---
-MAX_NDIM = 32                #: Maximum number of dimensions (prevent allocation attacks)
-MAX_ELEMENTS = 10**9         #: Maximum elements per tensor (default ~4GB for float32)
+MAX_NDIM = 32  #: Maximum number of dimensions (prevent allocation attacks)
+MAX_ELEMENTS = 10**9  #: Maximum elements per tensor (default ~4GB for float32)
 
 # --- Flags ---
-FLAG_ALIGNED = 1      #: Packet uses 64-byte alignment
-FLAG_INTEGRITY = 2    #: Packet includes an 8-byte XXH3 checksum footer
+FLAG_ALIGNED = 1  #: Packet uses 64-byte alignment
+FLAG_INTEGRITY = 2  #: Packet includes an 8-byte XXH3 checksum footer
 FLAG_COMPRESSION = 4  #: Packet body is compressed (Reserved for future use)
 
 # --- Dtype Mapping ---
 _DTYPE_MAP = {
-    np.dtype('float32'): 1,
-    np.dtype('int32'): 2,
-    np.dtype('float64'): 3,
-    np.dtype('int64'): 4,
-    np.dtype('uint8'): 5,
-    np.dtype('uint16'): 6,
-    np.dtype('bool'): 7,
-    np.dtype('float16'): 8,
-    np.dtype('int8'): 9,
-    np.dtype('int16'): 10,
-    np.dtype('uint32'): 11,
-    np.dtype('uint64'): 12,
-    np.dtype('complex64'): 13,
-    np.dtype('complex128'): 14,
+    np.dtype("float32"): 1,
+    np.dtype("int32"): 2,
+    np.dtype("float64"): 3,
+    np.dtype("int64"): 4,
+    np.dtype("uint8"): 5,
+    np.dtype("uint16"): 6,
+    np.dtype("bool"): 7,
+    np.dtype("float16"): 8,
+    np.dtype("int8"): 9,
+    np.dtype("int16"): 10,
+    np.dtype("uint32"): 11,
+    np.dtype("uint64"): 12,
+    np.dtype("complex64"): 13,
+    np.dtype("complex128"): 14,
 }
 
 # Try to register bfloat16 (Code 15)
 try:
     # Try getting it directly (NumPy 2.x or if ml_dtypes is loaded)
-    _bf16 = np.dtype('bfloat16')
+    _bf16 = np.dtype("bfloat16")
     _DTYPE_MAP[_bf16] = 15
 except TypeError:
     try:
         import ml_dtypes
-        _bf16 = np.dtype('bfloat16')
+
+        _bf16 = np.dtype("bfloat16")
         _DTYPE_MAP[_bf16] = 15
     except ImportError:
         pass
