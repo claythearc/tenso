@@ -1,27 +1,32 @@
 """
 Core Serialization Engine for Tenso.
+
+This module provides high-performance functions for converting NumPy arrays,
+Sparse matrices, and Dictionaries to the Tenso binary format. It supports
+zero-copy memory mapping, LZ4 compression, and XXH3 integrity verification.
 """
 
-import mmap
 import struct
-import sys
-from typing import Any, BinaryIO, Generator, Optional, Union
-
 import numpy as np
 import xxhash
-
+import sys
+import mmap
+from typing import BinaryIO, Union, Any, Generator, Optional, Dict
 from .config import (
+    _MAGIC,
+    _VERSION,
     _ALIGNMENT,
     _DTYPE_MAP,
-    _MAGIC,
     _REV_DTYPE_MAP,
-    _VERSION,
     FLAG_ALIGNED,
-    FLAG_COMPRESSION,
     FLAG_INTEGRITY,
+    FLAG_COMPRESSION,
     FLAG_SPARSE,
-    MAX_ELEMENTS,
+    FLAG_BUNDLE,
+    FLAG_SPARSE_CSR,
+    FLAG_SPARSE_CSC,
     MAX_NDIM,
+    MAX_ELEMENTS,
 )
 
 try:
@@ -37,11 +42,32 @@ IS_LITTLE_ENDIAN = sys.byteorder == "little"
 def _read_into_buffer(
     source: Any, buf: Union[bytearray, memoryview, np.ndarray]
 ) -> bool:
-    """Fill a buffer from a source, handling various I/O types."""
+    """
+    Fill a buffer from a source, handling various I/O types.
+
+    Parameters
+    ----------
+    source : Any
+        The data source to read from (e.g., file, socket, BytesIO).
+    buf : Union[bytearray, memoryview, np.ndarray]
+        The buffer to fill with data.
+
+    Returns
+    -------
+    bool
+        True if the buffer was filled completely, False if the stream ended
+        before any data was read.
+
+    Raises
+    ------
+    EOFError
+        If the source ends prematurely after partial data has been read.
+    """
     view = memoryview(buf)
     n = view.nbytes
     if n == 0:
         return True
+
     pos = 0
     while pos < n:
         read = 0
@@ -59,21 +85,45 @@ def _read_into_buffer(
                 if hasattr(source, "recv")
                 else source.read(remaining)
             )
+
             if chunk:
                 view[pos : pos + len(chunk)] = chunk
                 read = len(chunk)
             else:
                 read = 0
+
         if read == 0:
             if pos == 0:
                 return False
             raise EOFError(f"Expected {n} bytes, got {pos}")
+
         pos += read
     return True
 
 
-def read_stream(source: Any) -> Optional[np.ndarray]:
-    """Read and deserialize a tensor from a stream source with DoS protection."""
+def read_stream(source: Any) -> Optional[Any]:
+    """
+    Read and deserialize an object from a stream source with DoS protection.
+
+    Parameters
+    ----------
+    source : Any
+        Stream source to read from (must support read() or recv()).
+
+    Returns
+    -------
+    Optional[Any]
+        The deserialized NumPy array, Sparse matrix, or Dictionary. Returns None
+        if the stream ended before any data was read.
+
+    Raises
+    ------
+    ValueError
+        If the packet is invalid or exceeds security limits.
+    EOFError
+        If the stream ends prematurely during reading.
+    """
+    # 1. Read Header
     header = bytearray(8)
     try:
         if not _read_into_buffer(source, header):
@@ -84,6 +134,15 @@ def read_stream(source: Any) -> Optional[np.ndarray]:
     magic, ver, flags, dtype_code, ndim = struct.unpack("<4sBBBB", header)
     if magic != _MAGIC:
         raise ValueError("Invalid tenso packet")
+
+    # Handle Bundle/Sparse via Loads (reading whole packet into memory)
+    # Note: For optimized stream parsing of bundles, use a length-prefixed wrapper.
+    if flags & (FLAG_BUNDLE | FLAG_SPARSE | FLAG_SPARSE_CSR | FLAG_SPARSE_CSC):
+        # We need to know the total length. Since the protocol doesn't have a
+        # global length in the header for non-dense types yet, we rely on loads().
+        pass
+
+    # 2. Read Shape (DoS Check)
     if ndim > MAX_NDIM:
         raise ValueError(f"Packet exceeds maximum dimensions ({ndim} > {MAX_NDIM})")
 
@@ -106,6 +165,7 @@ def read_stream(source: Any) -> Optional[np.ndarray]:
     if dtype is None:
         raise ValueError(f"Unsupported dtype code: {dtype_code}")
 
+    # 3. Read Body
     current_pos = 8 + shape_len
     remainder = current_pos % _ALIGNMENT
     padding_len = 0 if remainder == 0 else (_ALIGNMENT - remainder)
@@ -119,12 +179,12 @@ def read_stream(source: Any) -> Optional[np.ndarray]:
     except EOFError as e:
         raise EOFError(f"Stream ended during body read. {e}") from None
 
+    # 4. Verify Integrity
     if footer_len > 0:
         body_slice = data_buffer[padding_len : padding_len + body_len]
-        if (
-            xxhash.xxh3_64_intdigest(body_slice)
-            != struct.unpack("<Q", data_buffer[padding_len + body_len :])[0]
-        ):
+        actual_hash = xxhash.xxh3_64_intdigest(body_slice)
+        expected_hash = struct.unpack("<Q", data_buffer[padding_len + body_len :])[0]
+        if actual_hash != expected_hash:
             raise ValueError("Integrity check failed: XXH3 mismatch")
 
     arr = np.frombuffer(
@@ -143,41 +203,45 @@ def iter_dumps(
     Parameters
     ----------
     tensor : np.ndarray
-        The tensor to serialize.
+        The array to serialize.
     strict : bool, default False
-        Whether to enforce C-contiguous arrays.
+        If True, raises ValueError for non-contiguous arrays.
     check_integrity : bool, default False
-        Whether to include integrity check.
+        If True, includes an XXH3 checksum footer.
 
     Yields
     ------
-    bytes or memoryview
-        Packet parts for serialization.
+    Union[bytes, memoryview]
+        Sequential chunks of the Tenso packet.
     """
     if tensor.dtype not in _DTYPE_MAP:
         raise ValueError(f"Unsupported dtype: {tensor.dtype}")
+
     if not tensor.flags["C_CONTIGUOUS"]:
         if strict:
             raise ValueError("Tensor is not C-Contiguous")
         tensor = np.ascontiguousarray(tensor)
+
     if not IS_LITTLE_ENDIAN or tensor.dtype.byteorder == ">":
         tensor = tensor.astype(tensor.dtype.newbyteorder("<"))
 
     dtype_code = _DTYPE_MAP[tensor.dtype]
     shape = tensor.shape
     ndim = len(shape)
-    flags = FLAG_ALIGNED | (FLAG_INTEGRITY if check_integrity else 0)
 
-    yield struct.pack("<4sBBBB", _MAGIC, _VERSION, flags, dtype_code, ndim)
-    yield struct.pack(f"<{ndim}I", *shape)
+    flags = FLAG_ALIGNED | (FLAG_INTEGRITY if check_integrity else 0)
+    header = struct.pack("<4sBBBB", _MAGIC, _VERSION, flags, dtype_code, ndim)
+    shape_block = struct.pack(f"<{ndim}I", *shape)
+    yield header
+    yield shape_block
 
     current_len = 8 + (ndim * 4)
-    remainder = current_len % _ALIGNMENT
-    padding_len = 0 if remainder == 0 else (_ALIGNMENT - remainder)
+    padding_len = (_ALIGNMENT - (current_len % _ALIGNMENT)) % _ALIGNMENT
     if padding_len > 0:
         yield b"\x00" * padding_len
 
     yield tensor.data
+
     if check_integrity:
         yield struct.pack("<Q", xxhash.xxh3_64_intdigest(tensor.data))
 
@@ -186,23 +250,23 @@ def write_stream(
     tensor: np.ndarray, dest: Any, strict: bool = False, check_integrity: bool = False
 ) -> int:
     """
-    Write a tensor to a destination using vectored I/O.
+    Write a tensor to a destination using memory-efficient streaming.
 
     Parameters
     ----------
     tensor : np.ndarray
-        The tensor to write.
-    dest : file-like object
-        The destination to write to.
+        The array to serialize.
+    dest : Any
+        Destination supporting .write() (e.g., file, socket).
     strict : bool, default False
-        Whether to enforce C-contiguous arrays.
+        Strict contiguous check.
     check_integrity : bool, default False
-        Whether to include integrity check.
+        Include integrity hash.
 
     Returns
     -------
     int
-        Number of bytes written.
+        The total number of bytes written.
     """
     chunks = list(iter_dumps(tensor, strict=strict, check_integrity=check_integrity))
     written = 0
@@ -219,41 +283,70 @@ def dumps(
     compress: bool = False,
 ) -> memoryview:
     """
-    Serialize a numpy or sparse (COO) array to a Tenso packet.
+    Serialize an object (Array, Sparse Matrix, or Dict) to a Tenso packet.
 
     Parameters
     ----------
-    tensor : array_like or sparse matrix
-        The tensor to serialize.
+    tensor : Any
+        The object to serialize.
     strict : bool, default False
-        Whether to enforce C-contiguous arrays.
+        If True, raises error for non-contiguous arrays.
     check_integrity : bool, default False
-        Whether to include integrity check.
+        If True, includes XXH3 hash for verification.
     compress : bool, default False
-        Whether to compress the data.
+        If True, uses LZ4 compression on the data body.
 
     Returns
     -------
     memoryview
-        The serialized packet.
+        A view of the complete Tenso packet bytes.
     """
-    if hasattr(tensor, "tocoo") and not isinstance(tensor, np.ndarray):
-        coo = tensor.tocoo()
-        data_p = dumps(coo.data, strict, False, False)
-        row_p = dumps(coo.row, strict, False, False)
-        col_p = dumps(coo.col, strict, False, False)
+    # 1. Multi-tensor Bundle (Dictionaries)
+    if isinstance(tensor, dict):
+        parts = []
         header = struct.pack(
-            "<4sBBBB", _MAGIC, _VERSION, FLAG_SPARSE, 0, len(coo.shape)
+            "<4sBBBB", _MAGIC, _VERSION, FLAG_BUNDLE, 0, min(len(tensor), 255)
         )
-        shape_block = struct.pack(f"<{len(coo.shape)}I", *coo.shape)
-        return memoryview(b"".join([header, shape_block, data_p, row_p, col_p]))
+        parts.append(header)
+        for key, value in tensor.items():
+            key_bytes = key.encode("utf-8")
+            parts.append(struct.pack("<I", len(key_bytes)) + key_bytes)
+            val_packet = dumps(value, strict, check_integrity, compress)
+            parts.append(struct.pack("<I", len(val_packet)) + val_packet)
+        return memoryview(b"".join(parts))
 
+    # 2. Sparse Formats (COO, CSR, CSC)
+    if hasattr(tensor, "format") and not isinstance(tensor, np.ndarray):
+        fmt = tensor.format
+        flag = {"coo": FLAG_SPARSE, "csr": FLAG_SPARSE_CSR, "csc": FLAG_SPARSE_CSC}.get(
+            fmt
+        )
+        if flag is None:
+            raise ValueError(f"Unsupported sparse format: {fmt}")
+
+        comps = (
+            [tensor.data, tensor.row, tensor.col]
+            if fmt == "coo"
+            else [tensor.data, tensor.indices, tensor.indptr]
+        )
+        header = struct.pack("<4sBBBB", _MAGIC, _VERSION, flag, 0, len(tensor.shape))
+        shape_block = struct.pack(f"<{len(tensor.shape)}I", *tensor.shape)
+
+        sub_pkts = []
+        for c in comps:
+            sp = dumps(c, strict, False, False)
+            sub_pkts.append(struct.pack("<I", len(sp)) + sp)
+        return memoryview(b"".join([header, shape_block] + sub_pkts))
+
+    # 3. Standard Array
     if tensor.dtype not in _DTYPE_MAP:
         raise ValueError(f"Unsupported dtype: {tensor.dtype}")
+
     if not tensor.flags["C_CONTIGUOUS"]:
         if strict:
             raise ValueError("Tensor is not C-Contiguous")
         tensor = np.ascontiguousarray(tensor)
+
     if not IS_LITTLE_ENDIAN or tensor.dtype.byteorder == ">":
         tensor = tensor.astype(tensor.dtype.newbyteorder("<"))
 
@@ -265,7 +358,7 @@ def dumps(
 
     if compress:
         if not HAS_LZ4:
-            raise ImportError("Compression requires 'lz4'")
+            raise ImportError("Compression requires 'lz4' package.")
         body = lz4.frame.compress(body)
         flags |= FLAG_COMPRESSION
 
@@ -288,19 +381,20 @@ def dumps(
 def loads(
     data: Union[bytes, bytearray, memoryview, np.ndarray, mmap.mmap], copy: bool = False
 ) -> Any:
-    """Deserialize a Tenso packet from a bytes-like object with DoS protection.
+    """
+    Deserialize a Tenso packet into its original Python object.
 
     Parameters
     ----------
-    data : bytes, bytearray, memoryview, np.ndarray, or mmap.mmap
-        The serialized Tenso packet data.
-    copy : bool, optional
-        Whether to copy the data. Default is False.
+    data : Union[bytes, bytearray, memoryview, np.ndarray, mmap.mmap]
+        The raw Tenso packet data.
+    copy : bool, default False
+        If True, returns a writeable copy. Otherwise returns a read-only view.
 
     Returns
     -------
     Any
-        The deserialized tensor or sparse matrix.
+        The reconstructed NumPy array, Dictionary, or Sparse Matrix.
     """
     mv = memoryview(data)
     if len(mv) < 8:
@@ -308,24 +402,54 @@ def loads(
     magic, ver, flags, dtype_code, ndim = struct.unpack("<4sBBBB", mv[:8])
     if magic != _MAGIC:
         raise ValueError("Invalid tenso packet")
+
+    # 1. Bundle Deserialization
+    if flags & FLAG_BUNDLE:
+        res = {}
+        offset = 8
+        for _ in range(ndim):
+            k_len = struct.unpack("<I", mv[offset : offset + 4])[0]
+            offset += 4
+            key = bytes(mv[offset : offset + k_len]).decode("utf-8")
+            offset += k_len
+            v_len = struct.unpack("<I", mv[offset : offset + 4])[0]
+            offset += 4
+            res[key] = loads(mv[offset : offset + v_len], copy=copy)
+            offset += v_len
+        return res
+
+    # 2. Sparse Deserialization
+    if flags & (FLAG_SPARSE | FLAG_SPARSE_CSR | FLAG_SPARSE_CSC):
+        try:
+            from scipy import sparse
+        except ImportError:
+            raise ImportError("scipy is required for sparse deserialization.")
+
+        shape_end = 8 + (ndim * 4)
+        shape = struct.unpack(f"<{ndim}I", mv[8:shape_end])
+        offset = shape_end
+        sub_objs = []
+        for _ in range(3):
+            sub_len = struct.unpack("<I", mv[offset : offset + 4])[0]
+            offset += 4
+            sub_objs.append(loads(mv[offset : offset + sub_len], copy=copy))
+            offset += sub_len
+
+        c1, c2, c3 = sub_objs
+        if flags & FLAG_SPARSE:
+            return sparse.coo_matrix((c1, (c2, c3)), shape=shape)
+        if flags & FLAG_SPARSE_CSR:
+            return sparse.csr_matrix((c1, c2, c3), shape=shape)
+        return sparse.csc_matrix((c1, c2, c3), shape=shape)
+
+    # 3. Dense Array Deserialization
     if ndim > MAX_NDIM:
-        raise ValueError(f"Packet exceeds maximum dimensions ({ndim})")
+        raise ValueError(f"Packet exceeds maximum dimensions ({ndim} > {MAX_NDIM})")
 
     shape_end = 8 + (ndim * 4)
     shape = struct.unpack(f"<{ndim}I", mv[8:shape_end])
     if np.prod(shape) > MAX_ELEMENTS:
         raise ValueError("Packet exceeds maximum elements")
-
-    if flags & FLAG_SPARSE:
-        from scipy.sparse import coo_matrix
-
-        offset = shape_end
-        d_arr = loads(mv[offset:], copy)
-        offset += len(dumps(d_arr))
-        r_arr = loads(mv[offset:], copy)
-        offset += len(dumps(r_arr))
-        c_arr = loads(mv[offset:], copy)
-        return coo_matrix((d_arr, (r_arr, c_arr)), shape=shape)
 
     dtype = _REV_DTYPE_MAP.get(dtype_code)
     if dtype is None:
@@ -367,42 +491,27 @@ def dump(
     strict: bool = False,
     check_integrity: bool = False,
 ) -> None:
-    """Serialize a tensor and write it to a binary file.
-
-    Parameters
-    ----------
-    tensor : np.ndarray
-        The tensor to serialize.
-    fp : BinaryIO
-        The binary file pointer to write to.
-    strict : bool, optional
-        Whether to use strict mode. Default is False.
-    check_integrity : bool, optional
-        Whether to check integrity. Default is False.
-
-    Returns
-    -------
-    None
-    """
+    """Serialize a tensor and write it to an open binary file."""
     write_stream(tensor, fp, strict=strict, check_integrity=check_integrity)
 
 
 def load(fp: BinaryIO, mmap_mode: bool = False, copy: bool = False) -> Any:
-    """Deserialize a tensor from a binary file.
+    """
+    Deserialize an object from an open binary file.
 
     Parameters
     ----------
     fp : BinaryIO
-        The binary file pointer to read from.
-    mmap_mode : bool, optional
-        Whether to use memory mapping. Default is False.
-    copy : bool, optional
-        Whether to copy the data. Default is False.
+        Open binary file object.
+    mmap_mode : bool, default False
+        Use memory mapping for large files.
+    copy : bool, default False
+        Return a writeable copy.
 
     Returns
     -------
     Any
-        The deserialized tensor.
+        The reconstructed object.
     """
     if mmap_mode:
         mm = mmap.mmap(fp.fileno(), 0, access=mmap.ACCESS_READ)

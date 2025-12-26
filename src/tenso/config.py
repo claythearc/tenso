@@ -1,22 +1,28 @@
 """
 Configuration and Protocol Constants for Tenso.
+
+This module defines the binary protocol version, magic numbers,
+memory alignment requirements, and feature flags used across the library.
 """
 
 import numpy as np
 
-_MAGIC = b"TNSO"  #: Magic number for Tenso packet header
-_VERSION = 2  #: Protocol version
-_ALIGNMENT = 64  #: SIMD alignment boundary
+_MAGIC = b"TNSO"  #: Magic number for Tenso packet header (bytes)
+_VERSION = 2  #: Protocol version (int)
+_ALIGNMENT = 64  #: Align body to 64-byte boundaries for AVX-512/SIMD (int)
 
 # --- Security Limits (DoS Protection) ---
-MAX_NDIM = 32  #: Maximum dimensions to prevent allocation attacks
-MAX_ELEMENTS = 10**9  #: Maximum elements per tensor
+MAX_NDIM = 32  #: Maximum number of dimensions (int)
+MAX_ELEMENTS = 10**9  #: Maximum elements per tensor (int)
 
-# --- Flags ---
-FLAG_ALIGNED = 1  #: Packet uses 64-byte alignment
-FLAG_INTEGRITY = 2  #: Packet includes an 8-byte XXH3 checksum footer
-FLAG_COMPRESSION = 4  #: Packet body is compressed using LZ4
-FLAG_SPARSE = 8  #: Packet contains a Sparse COO tensor
+# --- Protocol Flags ---
+FLAG_ALIGNED = 1  #: Packet uses 64-byte alignment (int)
+FLAG_INTEGRITY = 2  #: Packet includes an 8-byte XXH3 checksum footer (int)
+FLAG_COMPRESSION = 4  #: Packet body is compressed using LZ4 (int)
+FLAG_SPARSE = 8  #: Packet contains a Sparse COO tensor (int)
+FLAG_BUNDLE = 16  #: Packet contains a collection (dict) of tensors (int)
+FLAG_SPARSE_CSR = 32  #: Packet contains a Sparse CSR tensor (int)
+FLAG_SPARSE_CSC = 64  #: Packet contains a Sparse CSC tensor (int)
 
 # --- Dtype Mapping ---
 _DTYPE_MAP = {
@@ -36,6 +42,7 @@ _DTYPE_MAP = {
     np.dtype("complex128"): 14,
 }
 
+# Try to register bfloat16 (Code 15)
 try:
     _bf16 = np.dtype("bfloat16")
     _DTYPE_MAP[_bf16] = 15

@@ -1,18 +1,34 @@
 """
 FastAPI Integration for Tenso.
+
+Allows zero-copy streaming of tensors from API endpoints and
+high-performance ingestion of incoming Tenso packets.
 """
 
-from typing import Any
-
-import numpy as np
-from fastapi import HTTPException, Request
+from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
-
+import numpy as np
+from typing import Any
 from .core import iter_dumps, loads
 
 
 class TensoResponse(StreamingResponse):
-    """FastAPI Response class for high-performance tensor streaming."""
+    """
+    FastAPI Response for zero-copy tensor streaming.
+
+    Parameters
+    ----------
+    tensor : np.ndarray
+        The tensor to stream.
+    filename : str, optional
+        Filename for Content-Disposition header.
+    strict : bool, default False
+        Strict contiguous check.
+    check_integrity : bool, default False
+        Include checksum.
+    **kwargs
+        Passed to StreamingResponse.
+    """
 
     def __init__(
         self,
@@ -22,22 +38,6 @@ class TensoResponse(StreamingResponse):
         check_integrity: bool = False,
         **kwargs,
     ):
-        """
-        Initialize the TensoResponse.
-
-        Parameters
-        ----------
-        tensor : np.ndarray
-            The tensor to stream.
-        filename : str, optional
-            Filename for the response.
-        strict : bool, default False
-            Whether to enforce strict C-contiguous arrays.
-        check_integrity : bool, default False
-            Whether to include integrity check.
-        **kwargs
-            Additional arguments passed to StreamingResponse.
-        """
         stream = iter_dumps(tensor, strict=strict, check_integrity=check_integrity)
         super().__init__(stream, media_type="application/octet-stream", **kwargs)
         if not hasattr(self, "background"):
@@ -50,7 +50,8 @@ class TensoResponse(StreamingResponse):
 
 
 async def get_tenso_data(request: Request) -> Any:
-    """Dependency to extract a Tenso tensor from an incoming FastAPI Request.
+    """
+    Dependency to extract a Tenso object from an incoming FastAPI Request.
 
     Parameters
     ----------
@@ -60,12 +61,12 @@ async def get_tenso_data(request: Request) -> Any:
     Returns
     -------
     Any
-        The deserialized tensor.
+        The deserialized array, bundle, or sparse matrix.
 
     Raises
     ------
     HTTPException
-        If content type is wrong or invalid packet.
+        If the payload is invalid or headers are missing.
     """
     if request.headers.get("content-type") != "application/octet-stream":
         raise HTTPException(
@@ -75,4 +76,6 @@ async def get_tenso_data(request: Request) -> Any:
     try:
         return loads(body)
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Invalid Tenso packet: {str(e)}")
+        raise HTTPException(
+            status_code=422, detail=f"Invalid Tenso packet: {str(e)}"
+        )

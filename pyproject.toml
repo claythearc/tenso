@@ -4,6 +4,7 @@ version = "0.9.1"
 description = "High-performance zero-copy tensor protocol"
 readme = "README.md"
 dependencies = [
+    "lz4>=4.4.5",
     "numpy",
     "xxhash>=3.6.0",
 ]
