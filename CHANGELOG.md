@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v0.10.1 (2025-12-27)
+
+### Bug Fixes
+
+- Enhance run_stream_write for dynamic port allocation and improve error handling; update
+  read_stream for better sparse matrix support and DoS protection
+  ([`8c6d92d`](https://github.com/Khushiyant/tenso/commit/8c6d92d46d1ed48c7721da46ee2ff8d4a1fe7754))
+
+### Chores
+
+- Update LICENSE to Apache License 2.0 with detailed terms and conditions
+  ([`9401a99`](https://github.com/Khushiyant/tenso/commit/9401a99fb3ac18dda6f2139d5da5a9cce5a8d975))
+
+### Continuous Integration
+
+- Add repository dispatch event for release completion to trigger documentation build
+  ([`5438844`](https://github.com/Khushiyant/tenso/commit/54388445f6860d5a9cc11f09a3c2b0b1e730f074))
+
+### Documentation
+
+- Update README with accurate performance metrics and licensing information
+  ([`18368c0`](https://github.com/Khushiyant/tenso/commit/18368c0cbaac34348ac81f89652d5114d75a8e9f))
+
+### Refactoring
+
+- Clean up imports and remove unused variables across multiple files
+  ([`3543ebc`](https://github.com/Khushiyant/tenso/commit/3543ebc4c8ea6ef37ff39ee0666a6698402fe481))
+
+
 ## v0.10.0 (2025-12-26)
 
 ### Chores
