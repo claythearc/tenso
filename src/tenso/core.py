@@ -105,10 +105,15 @@ def read_stream(source: Any) -> Optional[Any]:
     """
     Read and deserialize an object from a stream source with DoS protection.
 
+    This function supports streaming deserialization for dense NumPy arrays,
+    multi-tensor bundles (dictionaries), and sparse matrices (COO, CSR, CSC).
+    It avoids loading the entire packet into memory before parsing, making it
+    suitable for large-scale data ingestion.
+
     Parameters
     ----------
     source : Any
-        Stream source to read from (must support read() or recv()).
+        Stream source to read from (must support .read() or .recv()).
 
     Returns
     -------
@@ -122,6 +127,8 @@ def read_stream(source: Any) -> Optional[Any]:
         If the packet is invalid or exceeds security limits.
     EOFError
         If the stream ends prematurely during reading.
+    ImportError
+        If scipy is missing during sparse matrix deserialization.
     """
     # 1. Read Header
     header = bytearray(8)
@@ -135,14 +142,83 @@ def read_stream(source: Any) -> Optional[Any]:
     if magic != _MAGIC:
         raise ValueError("Invalid tenso packet")
 
-    # Handle Bundle/Sparse via Loads (reading whole packet into memory)
-    # Note: For optimized stream parsing of bundles, use a length-prefixed wrapper.
-    if flags & (FLAG_BUNDLE | FLAG_SPARSE | FLAG_SPARSE_CSR | FLAG_SPARSE_CSC):
-        # We need to know the total length. Since the protocol doesn't have a
-        # global length in the header for non-dense types yet, we rely on loads().
-        pass
+    # 2. Handle Bundle (Dictionaries)
+    if flags & FLAG_BUNDLE:
+        res = {}
+        # ndim stores the number of items for bundles (up to 255)
+        for _ in range(ndim):
+            # Read Key Length
+            k_len_buf = bytearray(4)
+            try:
+                if not _read_into_buffer(source, k_len_buf):
+                    raise EOFError("Stream ended during bundle key length read")
+            except EOFError as e:
+                raise EOFError(
+                    f"Stream ended during bundle key length read. {e}"
+                ) from None
+            k_len = struct.unpack("<I", k_len_buf)[0]
 
-    # 2. Read Shape (DoS Check)
+            # Read Key
+            key_buf = bytearray(k_len)
+            try:
+                if not _read_into_buffer(source, key_buf):
+                    raise EOFError("Stream ended during bundle key read")
+            except EOFError as e:
+                raise EOFError(f"Stream ended during bundle key read. {e}") from None
+            key = key_buf.decode("utf-8")
+
+            # Read Value Packet Length prefix (4 bytes)
+            v_len_buf = bytearray(4)
+            try:
+                if not _read_into_buffer(source, v_len_buf):
+                    raise EOFError("Stream ended during bundle value length read")
+            except EOFError as e:
+                raise EOFError(
+                    f"Stream ended during bundle value length read. {e}"
+                ) from None
+
+            # Recursively read the nested Tenso packet
+            res[key] = read_stream(source)
+        return res
+
+    # 3. Handle Sparse Formats (COO, CSR, CSC)
+    if flags & (FLAG_SPARSE | FLAG_SPARSE_CSR | FLAG_SPARSE_CSC):
+        try:
+            from scipy import sparse
+        except ImportError:
+            raise ImportError("scipy is required for sparse deserialization.")
+
+        # Read Shape
+        shape_len = ndim * 4
+        shape_bytes = bytearray(shape_len)
+        try:
+            if not _read_into_buffer(source, shape_bytes):
+                raise EOFError("Stream ended during sparse shape read")
+        except EOFError as e:
+            raise EOFError(f"Stream ended during sparse shape read. {e}") from None
+        shape = struct.unpack(f"<{ndim}I", shape_bytes)
+
+        # Read 3 sub-packets (data, indices/row, indptr/col)
+        sub_objs = []
+        for i, label in enumerate(["data", "indices/row", "indptr/col"]):
+            v_len_buf = bytearray(4)
+            try:
+                if not _read_into_buffer(source, v_len_buf):
+                    raise EOFError(f"Stream ended during sparse {label} length read")
+            except EOFError as e:
+                raise EOFError(
+                    f"Stream ended during sparse {label} length read. {e}"
+                ) from None
+            sub_objs.append(read_stream(source))
+
+        c1, c2, c3 = sub_objs
+        if flags & FLAG_SPARSE:
+            return sparse.coo_matrix((c1, (c2, c3)), shape=shape)
+        if flags & FLAG_SPARSE_CSR:
+            return sparse.csr_matrix((c1, c2, c3), shape=shape)
+        return sparse.csc_matrix((c1, c2, c3), shape=shape)
+
+    # 4. Dense Array Logic (DoS Protection & Buffer Allocation)
     if ndim > MAX_NDIM:
         raise ValueError(f"Packet exceeds maximum dimensions ({ndim} > {MAX_NDIM})")
 
@@ -165,7 +241,7 @@ def read_stream(source: Any) -> Optional[Any]:
     if dtype is None:
         raise ValueError(f"Unsupported dtype code: {dtype_code}")
 
-    # 3. Read Body
+    # Read Body & Padding
     current_pos = 8 + shape_len
     remainder = current_pos % _ALIGNMENT
     padding_len = 0 if remainder == 0 else (_ALIGNMENT - remainder)
@@ -179,7 +255,7 @@ def read_stream(source: Any) -> Optional[Any]:
     except EOFError as e:
         raise EOFError(f"Stream ended during body read. {e}") from None
 
-    # 4. Verify Integrity
+    # Verify Integrity
     if footer_len > 0:
         body_slice = data_buffer[padding_len : padding_len + body_len]
         actual_hash = xxhash.xxh3_64_intdigest(body_slice)
@@ -251,13 +327,14 @@ def write_stream(
 ) -> int:
     """
     Write a tensor to a destination using memory-efficient streaming.
+    Supports both file-like objects (.write) and sockets (.sendall).
 
     Parameters
     ----------
     tensor : np.ndarray
         The array to serialize.
     dest : Any
-        Destination supporting .write() (e.g., file, socket).
+        Destination supporting .write() or .sendall().
     strict : bool, default False
         Strict contiguous check.
     check_integrity : bool, default False
@@ -270,11 +347,18 @@ def write_stream(
     """
     chunks = list(iter_dumps(tensor, strict=strict, check_integrity=check_integrity))
     written = 0
+
+    # Determine the correct method for writing
+    write_method = getattr(dest, "sendall", getattr(dest, "write", None))
+    if write_method is None:
+        raise AttributeError(
+            f"Destination {type(dest)} has no '.write' or '.sendall' method."
+        )
+
     for chunk in chunks:
-        dest.write(chunk)
+        write_method(chunk)
         written += len(chunk)
     return written
-
 
 def dumps(
     tensor: Any,

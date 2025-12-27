@@ -444,33 +444,38 @@ def run_stream_read():
 
 
 def run_stream_write():
-    """Run stream write benchmarks."""
+    """Run network write benchmarks with improved synchronization."""
     print("\n" + "=" * 80)
     print(f"BENCHMARK 4: NETWORK WRITE (Integrity: {USE_INTEGRITY})")
     print("=" * 80)
 
-    PORT = 9998
+    # Use a dynamic port to avoid conflicts with other processes
+    s_temp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s_temp.bind(("", 0))
+    PORT = s_temp.getsockname()[1]
+    s_temp.close()
 
-    def sink_server():
+    def sink_server(port):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(("localhost", PORT))
-        s.listen(1)
         try:
+            s.bind(("localhost", port))
+            s.listen(1)
             conn, _ = s.accept()
             while True:
-                try:
-                    if not conn.recv(1024 * 1024):
-                        break
-                except Exception as _:
+                chunk = conn.recv(1024 * 1024)
+                if not chunk:
                     break
             conn.close()
-        except Exception as _:
+        except Exception:
             pass
-        s.close()
+        finally:
+            s.close()
 
-    t = threading.Thread(target=sink_server, daemon=True)
-    t.start()
+    server_thread = threading.Thread(target=sink_server, args=(PORT,), daemon=True)
+    server_thread.start()
+
+    # Ensure the server has time to start listening
     time.sleep(0.5)
 
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -482,7 +487,6 @@ def run_stream_write():
 
         print(f"Sending {COUNT} tensors (1KB each) over localhost TCP...")
 
-        # Optimized write_stream
         t0 = time.perf_counter()
         for _ in range(COUNT):
             tenso.write_stream(data, client, check_integrity=USE_INTEGRITY)
@@ -493,9 +497,8 @@ def run_stream_write():
         print(f"Total Time: {t_total:.4f}s")
         print(f"Throughput: {COUNT / t_total:.0f} packets/sec")
         print(f"Latency:    {(t_total / COUNT) * 1_000_000:.1f} µs/packet")
-    except Exception as _:
-        print("Network write benchmark failed. Connection issues.")
-
+    except Exception as e:
+        print(f"Network write benchmark failed: {e}")
 
 def run_memory_overhead():
     """Run memory overhead benchmarks."""
