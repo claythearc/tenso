@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package tenso_grpc;
+
+// Request containing the serialized tensor
+message PredictRequest {
+    string model_name = 1;
+    bytes tensor_packet = 2; // Tenso serialized bytes
+}
+
+// Response containing the result
+message PredictResponse {
+    bytes result_packet = 1; // Tenso serialized result
+    string status = 2;
+}
+
+service TensorInference {
+    rpc Predict(PredictRequest) returns (PredictResponse);
+}

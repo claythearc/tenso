@@ -23,6 +23,12 @@ jobs:
         uses: python-semantic-release/python-semantic-release@v9.15.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Generate gRPC stubs for release
+        run: |
+          pip install grpcio-tools
+          python -m grpc_tools.protoc -Isrc --python_out=src --grpc_python_out=src src/tenso/grpc/tenso_msg.proto
+          python -m grpc_tools.protoc -Isrc --python_out=src --grpc_python_out=src src/tenso/grpc/benchmark_msg.proto
 
       - name: Publish to PyPI
         if: steps.release.outputs.released == 'true'

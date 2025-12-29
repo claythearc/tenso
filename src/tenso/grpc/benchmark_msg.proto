@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package tenso_benchmark;
+
+message TensoRequest {
+    bytes data = 1;
+}
+
+message StandardRequest {
+    repeated float data = 1; // The "slow" standard way
+}
+
+message BenchResponse {
+    string status = 1;
+}
+
+service Benchmarker {
+    rpc SendTenso(TensoRequest) returns (BenchResponse);
+    rpc SendStandard(StandardRequest) returns (BenchResponse);
+}

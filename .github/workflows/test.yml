@@ -32,3 +32,13 @@ jobs:
     - name: Run tests
       run: |
         pytest -v
+
+    - name: Install gRPC tools
+      run: pip install grpcio-tools
+
+    - name: Generate gRPC code
+      run: |
+        python -m grpc_tools.protoc -Isrc/tenso/grpc \
+              --python_out=src/tenso/grpc \
+              --grpc_python_out=src/tenso/grpc \
+              src/tenso/grpc/tenso_msg.proto

@@ -70,7 +70,7 @@ pip install tenso
 
 ---
 
-## Quick Start (v0.10.0)
+## Quick Start (v0.10.1)
 
 ### Basic Serialization
 
@@ -158,8 +158,26 @@ packet = tenso.dumps(data, check_integrity=True)
 
 # Verification is automatic during loads()
 restored = tenso.loads(packet) 
-
 ```
+
+### gRPC Integration
+
+Tenso provides built-in support for gRPC, allowing you to pass tensors between services with minimal overhead.
+
+```python
+from tenso.grpc import tenso_msg_pb2, tenso_msg_pb2_grpc
+import tenso
+
+# In your Servicer
+def Predict(self, request, context):
+    data = tenso.loads(request.tensor_packet)
+    result = data * 2
+    return tenso_msg_pb2.PredictResponse(
+        result_packet=bytes(tenso.dumps(result))
+    )
+```
+
+**
 
 ---
 
@@ -194,7 +212,6 @@ The padding ensures the body starts at a **64-byte boundary**, enabling AVX-512 
 Contributions are welcome! We are currently looking for help with:
 
 * **Rust Core**: Porting serialization logic to Rust for even lower overhead.
-* **gRPC Integration**: Native Tenso marshaling for gRPC services.
 * **C++ / JavaScript Clients**: Extending the protocol to other ecosystems.
 
 ---
@@ -210,7 +227,7 @@ Apache License 2.0 - see [LICENSE](https://www.google.com/search?q=LICENSE) file
   author = {Khushiyant},
   title = {Tenso: High-Performance Zero-Copy Tensor Protocol},
   year = {2025},
-  version = {0.10.0},
+  version = {0.10.1},
   url = {[https://github.com/Khushiyant/tenso](https://github.com/Khushiyant/tenso)}
 }
 

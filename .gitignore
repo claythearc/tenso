@@ -16,3 +16,8 @@ __pycache__/
 dist/
 .pytest_cache/
 uv.lock
+
+# gRPC generated files
+*_pb2.py
+*_pb2_grpc.py
+*_pb2.pyi
