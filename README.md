@@ -3,7 +3,7 @@
 
 # Tenso
 
-**Up to 12.6x faster than Apache Arrow. 32x less CPU than SafeTensors.**
+**Up to 18.8x faster than Apache Arrow. 44x less CPU than SafeTensors.**
 
 Zero-copy, SIMD-aligned tensor protocol for high-performance ML infrastructure.
 
@@ -20,9 +20,9 @@ Most serialization formats are designed for general data or disk storage. Tenso 
 ### The Problem
 
 Traditional formats waste CPU cycles during deserialization:
-- **SafeTensors**: 41.3% CPU usage (great for disk, overkill for network)
-- **Pickle**: 43.3% CPU usage + security vulnerabilities
-- **Arrow**: Fast, but 12.6x slower than Tenso for large tensors
+- **SafeTensors**: 39.5% CPU usage (great for disk, overkill for network)
+- **Pickle**: 40.9% CPU usage + security vulnerabilities
+- **Arrow**: Fast, but 18.8x slower than Tenso for large tensors
 
 ### The Solution
 
@@ -31,7 +31,7 @@ Tenso achieves **true zero-copy** with:
 - **64-byte Alignment**: SIMD-ready padding ensures the data body is cache-line aligned.
 - **Direct Memory Mapping**: The CPU points directly to existing buffers without copying.
 
-**Result**: ~1.3% CPU usage vs >40% for SafeTensors/Pickle.
+**Result**: 0.9% CPU usage vs >39% for SafeTensors/Pickle.
 
 ---
 
@@ -43,10 +43,10 @@ Tenso achieves **true zero-copy** with:
 
 | Format | Time | CPU Usage | Speedup |
 |--------|------|-----------|---------|
-| **Tenso** | **0.064ms** | **1.3%** | **1x** |
-| Arrow | 0.810ms | 1.2% | 12.6x slower |
-| SafeTensors | 2.792ms | 41.3% | 43x slower |
-| Pickle | 3.031ms | 43.3% | 47x slower |
+| **Tenso** | **0.061ms** | **0.9%** | **1x** |
+| Arrow | 1.146ms | 0.9% | 18.8x slower |
+| SafeTensors | ~11.200ms | 39.5% | 183x slower |
+| Pickle | ~10.700ms | 40.9% | 175x slower |
 
 **
 
@@ -54,8 +54,8 @@ Tenso achieves **true zero-copy** with:
 
 | Method | Time | Throughput | Speedup |
 |--------|------|------------|---------|
-| **Tenso read_stream** | **7.05ms** | **13,534 MB/s** | **1x** |
-| Naive loop | 7,399.7ms | 12.8 MB/s | 1,050x slower |
+| **Tenso read_stream** | **5.69ms** | **16,769 MB/s** | **1x** |
+| Naive loop | 7,730.8ms | 12.3 MB/s | 1,359x slower |
 
 **
 
@@ -70,7 +70,7 @@ pip install tenso
 
 ---
 
-## Quick Start (v0.10.1)
+## Quick Start (v0.12.0)
 
 ### Basic Serialization
 
@@ -200,7 +200,7 @@ The padding ensures the body starts at a **64-byte boundary**, enabling AVX-512 
 
 ## Use Cases
 
-* **Model Serving APIs**: 12.6x faster deserialization saves massive CPU overhead on inference nodes.
+* **Model Serving APIs**: 18.8x faster deserialization saves massive CPU overhead on inference nodes.
 * **Distributed Training**: Efficiently pass gradients or activations between nodes (Ray, Spark).
 * **GPU-Direct Pipelines**: Stream data from network cards to GPU memory with minimal host intervention.
 * **Real-time Robotics**: Sub-millisecond latency for high-frequency sensor fusion (LIDAR, Radar).
@@ -227,7 +227,6 @@ Apache License 2.0 - see [LICENSE](https://www.google.com/search?q=LICENSE) file
   author = {Khushiyant},
   title = {Tenso: High-Performance Zero-Copy Tensor Protocol},
   year = {2025},
-  version = {0.10.1},
   url = {[https://github.com/Khushiyant/tenso](https://github.com/Khushiyant/tenso)}
 }
 
