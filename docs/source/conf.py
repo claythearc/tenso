@@ -48,9 +48,13 @@ release = meta.get("release", "0.6.0")
 autodoc_mock_imports = [
     "cupy",
     "torch",
-    "numpy"  # Optional: speeds up build if you don't need numpy internals
+    "numpy",  # Optional: speeds up build if you don't need numpy internals
     "xxhash",
+    "fastapi",
+    "uvicorn",
+    "grpc",
 ]
+
 
 # Extensions
 extensions = [
