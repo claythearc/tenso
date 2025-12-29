@@ -21,6 +21,16 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
+    - name: Install gRPC tools
+      run: pip install grpcio-tools
+
+    - name: Generate gRPC code
+      run: |
+        python -m grpc_tools.protoc -Isrc/tenso/grpc \
+              --python_out=src/tenso/grpc \
+              --grpc_python_out=src/tenso/grpc \
+              src/tenso/grpc/tenso_msg.proto
+              
     - name: Install dependencies
       # Installs the package in editable mode along with 'dev' dependencies
       # defined in your pyproject.toml (pytest, pyarrow, safetensors, etc.)
@@ -32,6 +42,7 @@ jobs:
     - name: Run tests
       run: |
         pytest -v
+<<<<<<< HEAD
 
     - name: Install gRPC tools
       run: pip install grpcio-tools
@@ -42,3 +53,5 @@ jobs:
               --python_out=src/tenso/grpc \
               --grpc_python_out=src/tenso/grpc \
               src/tenso/grpc/tenso_msg.proto
+=======
+>>>>>>> 9b6048f (feat: add gRPC support for tensor operations, including benchmarking and integration tests)
