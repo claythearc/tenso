@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.12.0 (2025-12-29)
+
+### Features
+
+- Add gRPC support for tensor operations, including benchmarking and integration tests
+  ([`d4d8674`](https://github.com/Khushiyant/tenso/commit/d4d8674ec7267704f307c936cb92a6b70882e132))
+
+
 ## v0.11.0 (2025-12-29)
 
 ### Features
