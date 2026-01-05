@@ -198,7 +198,7 @@ def bench_arrow(data):
     def dec(x):
         with pa.ipc.open_stream(x) as reader:
             batch = reader.read_next_batch()
-            return batch.column(0).to_numpy(zero_copy_only=False).reshape(data.shape)
+            return batch.column(0).to_numpy(zero_copy_only=True).reshape(data.shape)
 
     return enc, dec
 
@@ -427,13 +427,14 @@ def run_stream_read():
     # Legacy Loop Simulation
     stream.seek(0)
     t0 = time.perf_counter()
-    buffer = b""
+    chunks = []
     while True:
         chunk = stream.read(65536)
         if not chunk:
             break
-        buffer += chunk
-    tenso.loads(buffer)
+        chunks.append(chunk)
+    full_data = b"".join(chunks)  # Standard Python way
+    tenso.loads(full_data)
     t_old = (time.perf_counter() - t0) * 1000
     print(
         f"{'Naive Loop':<20} | {t_old:>7.2f} ms | {size_mb / (t_old / 1000):>7.2f} MB/s"
@@ -826,6 +827,44 @@ def run_correctness():
             print(f"{name:<20} | {'✗ FAIL':<10} | {'MISMATCH':<15}")
 
     print("-" * 55)
+
+def run_gpu_benchmark():
+    print("\n" + "=" * 80)
+    print("BENCHMARK: GPU TRANSFER")
+    print("=" * 80)
+
+    try:
+        import torch
+        import tenso.gpu as t_gpu
+
+        # Setup: Create a large tensor in RAM
+        shape = (4096, 4096)  # ~64MB float32
+        data = np.random.rand(*shape).astype(np.float32)
+        stream = io.BytesIO(tenso.dumps(data))
+
+        # Benchmark
+        t0 = time.perf_counter()
+        # This uses your pinned memory logic
+        t_gpu.read_to_device(stream, device_id=0)
+        torch.cuda.synchronize()  # Wait for GPU to finish
+        t_total = (time.perf_counter() - t0) * 1000
+
+        print(f"CPU -> GPU (Tenso): {t_total:.2f} ms")
+
+        # Compare to Standard PyTorch Load
+        stream.seek(0)
+        t0 = time.perf_counter()
+        # Standard way: Load to CPU -> Move to GPU
+        cpu_arr = tenso.loads(stream.read())
+        torch.tensor(cpu_arr).to("cuda")
+        torch.cuda.synchronize()
+        t_std = (time.perf_counter() - t0) * 1000
+
+        print(f"CPU -> GPU (Standard): {t_std:.2f} ms")
+        print(f"Speedup: {t_std / t_total:.1f}x")
+
+    except ImportError:
+        print("Skipping GPU benchmark (Torch/CUDA not found)")
 
 
 def print_summary():
