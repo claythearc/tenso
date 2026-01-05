@@ -78,7 +78,6 @@ Tenso achieves **true zero-copy** with:
 |--------|-------------|
 | **Throughput** | **88,491 packets/sec** |
 | **Latency** | **11.3 µs/packet** |
-**
 
 ---
 
